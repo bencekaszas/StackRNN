@@ -1,0 +1,39 @@
+BATCH_SIZE = 64
+SEQ_LENGTH = 120       # Max length of input 
+HIDDEN_DIM = 64
+LEARNING_RATE = 1e-3
+STEPS = 2000
+STACK_DEPTH = SEQ_LENGTH
+
+
+
+# Input x_t: 0, 1, =, PAD
+VOCAB_PAD = 0
+VOCAB_0 = 1
+VOCAB_1 = 2
+VOCAB_EQ = 3
+VOCAB_SIZE = 4
+
+# Stack Symbols: NULL, 0, 1
+STACK_NULL = 0
+STACK_0 = 1
+STACK_1 = 2
+STACK_VOCAB_SIZE = 3
+
+# Memory Actions (a_t): NOOP, PUSH_0, PUSH_1, POP
+ACT_NOOP = 0
+ACT_PUSH_0 = 1
+ACT_PUSH_1 = 2
+ACT_POP = 3
+NUM_MEM_ACTIONS = 4
+
+# Buffer Actions (b_t): NOOP, EMIT_0, EMIT_1
+OUT_NOOP = 0
+OUT_EMIT_0 = 1
+OUT_EMIT_1 = 2
+NUM_BUF_ACTIONS = 3
+
+# Controller States (s_t): READ (0), WRITE (1)
+STATE_READ = 0
+STATE_WRITE = 1
+NUM_STATES = 2
