@@ -68,7 +68,7 @@ class SoftStackMachineCell(nn.Module):
     
     @nn.compact
     def __call__(self, carry, inputs):
-        stack, ptr_dist, r_prev, s_prev = carry
+        stack, r_prev, s_prev = carry
         x_t, true_act, true_s, use_forcing = inputs
         
         # Embeddings (r_prev is now a vector, not an int index)
@@ -92,9 +92,9 @@ class SoftStackMachineCell(nn.Module):
         pred_state = jnp.argmax(logits_state, axis=-1)
         next_s = jnp.where(use_forcing > 0, true_s, pred_state)
         
-        stack_new, ptr_new, r_new = jax.vmap(soft_update_stack)(stack, ptr_dist, probs_to_exec)
+        stack_new, r_new = jax.vmap(soft_update_stack)(stack, probs_to_exec)
         
-        new_carry = (stack_new, ptr_new, r_new, next_s)
+        new_carry = (stack_new, r_new, next_s)
         return new_carry, (logits_mem, logits_buf, logits_state)
 
 class NeuralSoftStackMachine(nn.Module):
@@ -103,12 +103,11 @@ class NeuralSoftStackMachine(nn.Module):
         batch_size, seq_len = x.shape
         
         init_stack = jnp.zeros((batch_size, STACK_DEPTH, STACK_VOCAB_SIZE))
-        init_ptr = jnp.zeros((batch_size, STACK_DEPTH))
-        init_ptr = init_ptr.at[:, 0].set(1.0) # Pointer at bottom
+        init_stack = init_stack.at[:, :, STACK_NULL].set(1.0)
         init_reg = jnp.zeros((batch_size, STACK_VOCAB_SIZE)) # Empty reg
         init_state = jnp.zeros((batch_size,), dtype=jnp.int32)
         
-        carry = (init_stack, init_ptr, init_reg, init_state)
+        carry = (init_stack, init_reg, init_state)
         forcing_seq = jnp.full((batch_size, seq_len), use_forcing, dtype=jnp.float32)
         
         scan_inputs = (x, true_actions, true_states, forcing_seq)

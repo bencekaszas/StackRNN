@@ -46,12 +46,11 @@ def update_stack(stack, ptr, action):
 
 
 
-def soft_update_stack(stack, ptr_dist, action_probs):
+def soft_update_stack(stack, action_probs):
     """
-    "soft" stack update
+    "soft" stack update (Shift-based / No Pointer)
     
     stack: [Depth, Stack_Vocab_Size]
-    ptr_dist: [Depth] (Distribution)
     action_probs: [4] (NOOP, PUSH0, PUSH1, POP)
     """
     # actions
@@ -62,44 +61,33 @@ def soft_update_stack(stack, ptr_dist, action_probs):
     
     total_push = p_push0 + p_push1
     
-    #READ
-    # Shift pointer up
-    pop_ptr_dist = jnp.roll(ptr_dist, -1)
+    # 1. SHIFT DOWN (PUSH Candidate)
+    # stack[i] <- stack[i-1], stack[0] <- new_val
+    stack_down = jnp.roll(stack, 1, axis=0)
     
-    #boundary
-    pop_ptr_dist = pop_ptr_dist.at[-1].set(0.0)
-    pop_ptr_dist = pop_ptr_dist.at[0].add(ptr_dist[0])
-
-    #weighted stack
-    read_val_vec = jnp.sum(stack * pop_ptr_dist[:, None], axis=0)
+    # Calculate push value (handle divide by zero)
+    safe_push = jnp.where(total_push > 0, total_push, 1.0)
+    val_push_0 = p_push0 / safe_push
+    val_push_1 = p_push1 / safe_push
     
-    #WRITE
-    val_push_0 = p_push0 / total_push
-    val_push_1 = p_push1 / total_push
+    write_vec = jnp.array([0.0, 1.0, 0.0]) * val_push_0 + \
+                jnp.array([0.0, 0.0, 1.0]) * val_push_1
     
-
-    write_vec = jnp.array([0.0, 1.0, 0.0]) * val_push_0 + jnp.array([0.0, 0.0, 1.0]) * val_push_1
+    stack_down = stack_down.at[0].set(write_vec)
     
-    # mix old stack and new value
-    write_gate = ptr_dist[:, None] * total_push
-    stack_new = stack * (1.0 - write_gate) + write_vec[None, :] * write_gate
-    
-    # Erase
-    pop_gate = pop_ptr_dist[:, None] * p_pop
+    # 2. SHIFT UP (POP Candidate)
+    # stack[i] <- stack[i+1], stack[-1] <- NULL
+    stack_up = jnp.roll(stack, -1, axis=0)
     null_vec = jnp.array([1.0, 0.0, 0.0])
-    stack_new = stack_new * (1.0 - pop_gate) + null_vec[None, :] * pop_gate
+    stack_up = stack_up.at[-1].set(null_vec)
     
-    #move ptr
+    # 3. COMBINE
+    stack_new = (p_noop * stack) + \
+                (total_push * stack_down) + \
+                (p_pop * stack_up)
     
-    push_ptr_dist = jnp.roll(ptr_dist, 1)
-    push_ptr_dist = push_ptr_dist.at[0].set(0.0) #bottom doesnt wrap to top
+    # 4. READ (Peek at top)
+    # If we pop, we consume the top value.
+    r_t = stack[0] * p_pop + null_vec * (1.0 - p_pop)
     
-    # all movement possibilities
-    new_ptr_dist = (p_noop * ptr_dist) + \
-                   (total_push * push_ptr_dist) + \
-                   (p_pop * pop_ptr_dist)
-                   
-    # Scale read value by probability of popping
-    r_t = read_val_vec * p_pop
-    
-    return stack_new, new_ptr_dist, r_t
+    return stack_new, r_t
