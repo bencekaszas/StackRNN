@@ -1,4 +1,3 @@
-# run_experiment.py
 import jax
 import jax.numpy as jnp
 from flax.training import train_state
@@ -8,7 +7,7 @@ import numpy as np
 
 from constants import *
 from data_gen import generate_rev_trace
-from models import NeuralStackMachine, NeuralSoftStackMachine, VanillaLSTM
+from models import NeuralStackMachine, NeuralSoftStackMachine, VanillaLSTM, SequentialStackMachine
 
 def create_train_state(model_class, key):
     model = model_class()
@@ -30,8 +29,8 @@ def train_step(state, batch, use_forcing, supervise_trace):
         # Main Buffer Loss
         loss_b = optax.softmax_cross_entropy_with_integer_labels(l_buf, tgt_buf).mean()
         
-        # Auxiliary Losses (only if model outputs them, i.e., Stack Machines)
-        # We check shape of logits to determine if it's a dummy output
+        # Extra Losses (only if model outputs them)
+        # Check shape of logits to determine if dummy
         loss_m = 0.0
         loss_s = 0.0
         if l_mem.shape[-1] > 1:
@@ -49,14 +48,13 @@ def train_step(state, batch, use_forcing, supervise_trace):
 def evaluate(state, seq_len, n_samples=100):
     inputs, tgt_mem, tgt_buf, tgt_state = generate_rev_trace(n_samples, seq_len)
     
-    # Inference (No forcing)
+    # Inference
     logits = state.apply_fn(state.params, inputs, tgt_mem, tgt_state, False)
     pred_buf = jnp.argmax(logits[1], -1)
     
     # Accuracy: fraction of perfectly correct sequences
     # (Checking exact match on output buffer)
     # We ignore PAD tokens in accuracy? Usually for reverse task we check exact string match.
-    # Here checking element-wise mean is simpler for training curves.
     token_acc = (pred_buf == tgt_buf).mean()
     return token_acc
 
@@ -93,7 +91,10 @@ if __name__ == "__main__":
     results["Soft Stack (Supervised)"] = run("Soft Stack (Supervised)", NeuralSoftStackMachine, supervise_trace=True)
     results["Soft Stack (Unsupervised)"] = run("Soft Stack (Unsupervised)", NeuralSoftStackMachine, supervise_trace=False)
     results["LSTM"] = run("Vanilla LSTM", VanillaLSTM, supervise_trace=False)
-    
+    results["Seq Stack"] = run("Sequential", SequentialStackMachine, supervise_trace=True)
+    results["Seq Stack (Unsupervised)"] = run("Sequential (Unsupervised)", SequentialStackMachine, supervise_trace=False)
+
+
     # Plotting
     fig, ax = plt.subplots(1, 2, figsize=(12, 5))
     
@@ -115,4 +116,3 @@ if __name__ == "__main__":
         
     plt.tight_layout()
     plt.savefig("stack_benchmark.png")
-    print("\nBenchmark complete. Saved to stack_benchmark.png")
