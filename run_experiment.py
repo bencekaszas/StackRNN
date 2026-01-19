@@ -4,9 +4,10 @@ from flax.training import train_state
 import optax
 import matplotlib.pyplot as plt
 import numpy as np
+import seaborn as sns
 
 from constants import *
-from data_gen import generate_rev_trace
+from data_gen import generate_rev_trace, generate_fixed_batch
 from models import NeuralStackMachine, NeuralSoftStackMachine, VanillaLSTM, SequentialStackMachine
 
 def create_train_state(model_class, key):
@@ -84,35 +85,96 @@ def run(model_name, model_class, supervise_trace=True):
             
     return history
 
+#TODO: fix datagen with seq stack - we evaluate against shifted register
+# add XOR task? for that models need nonlinearity i.e. Relu
+
+
+
 if __name__ == "__main__":
-    results = {}
-    results["Hard Stack"] = run("Hard Stack", NeuralStackMachine, supervise_trace=True)
-    results["Hard Stack (Unsupervised)"] = run("Hard Stack (Unsupervised)", NeuralStackMachine, supervise_trace=False)
-    results["Soft Stack (Supervised)"] = run("Soft Stack (Supervised)", NeuralSoftStackMachine, supervise_trace=True)
-    results["Soft Stack (Unsupervised)"] = run("Soft Stack (Unsupervised)", NeuralSoftStackMachine, supervise_trace=False)
-    results["LSTM"] = run("Vanilla LSTM", VanillaLSTM, supervise_trace=False)
-    results["Seq Stack"] = run("Sequential", SequentialStackMachine, supervise_trace=True)
-    results["Seq Stack (Unsupervised)"] = run("Sequential (Unsupervised)", SequentialStackMachine, supervise_trace=False)
+    # --- Configuration ---
+    MODELS_TO_RUN = {
+        "Unsupervised Soft Stack": (NeuralSoftStackMachine, False), # (Class, supervise_trace)
+        "Unsupervised Seq Stack": (SequentialStackMachine, False),
+        "Vanilla LSTM": (VanillaLSTM, False)
+    }
 
+    TEST_LENGTHS = [10, 20, 40, 60, 70, 80, 100, 120, 140]
+    TRAINING_SEQ_LEN = 60 # Standard training length
+    N_EVAL_SAMPLES = 200  # Samples per length check
 
-    # Plotting
-    fig, ax = plt.subplots(1, 2, figsize=(12, 5))
-    
-    for name, hist in results.items():
-        line, = ax[0].plot(hist["step"], hist["id_acc"], label=name)
-        color = line.get_color()
-        ax[0].plot(hist["step"], hist["train_acc"], linestyle="--", alpha=0.4, color=color)
-        ax[1].plot(hist["step"], hist["ood_acc"], label=name, color=color)
+    final_results = {}
+
+    # --- Main Loop ---
+    for name, (model_cls, supervise) in MODELS_TO_RUN.items():
+        print(f"\n=== Training {name} ===")
         
-    ax[0].set_title(f"In-Distribution (Len {SEQ_LENGTH})")
-    ax[0].set_title(f"In-Distribution (Solid=Test, Dashed=Train)")
-    ax[1].set_title(f"Out-of-Distribution (Len {TEST_SEQ_LENGTH})")
-    
-    for a in ax:
-        a.set_xlabel("Steps")
-        a.set_ylabel("Accuracy")
-        a.legend()
-        a.grid(True, alpha=0.3)
+        # 1. Train
+        # We use the standard training routine provided in your context
+        # Assuming 'run' returns the training history and the final state
+        # (Note: I'll adapt the 'run' logic slightly to return the trained state)
         
+        key = jax.random.PRNGKey(42)
+        state = create_train_state(model_cls, key)
+        
+        # Train Loop (Simplified from your run code)
+        for step in range(2001): # 2000 steps
+            batch = generate_rev_trace(BATCH_SIZE, TRAINING_SEQ_LEN)
+            trace_weight = 1.0 if supervise else 0.0
+            state, loss, acc = train_step(state, batch, use_forcing=False, supervise_trace=trace_weight)
+            
+            if step % 500 == 0:
+                print(f"Step {step} | Train Acc: {acc:.2%}")
+
+        # 2. Evaluate OOD (The specific graph you want)
+        print(f"--- Evaluating OOD for {name} ---")
+        accuracies = []
+        
+        for L in TEST_LENGTHS:
+            # Generate FIXED length batch
+            batch = generate_fixed_batch(N_EVAL_SAMPLES, L)
+            inputs, tgt_mem, tgt_buf, tgt_state = batch
+            
+            # Run Inference
+            # Note: We must allow JAX to re-compile for new shapes if necessary, 
+            # or rely on dynamic shapes if enabled. 
+            # Since 'state.apply_fn' is jitted inside 'train_step' but here we call it raw:
+            logits = state.apply_fn(state.params, inputs, tgt_mem, tgt_state, False)
+            
+            # Calculate Accuracy
+            pred_buf = jnp.argmax(logits[1], -1)
+            
+            # Strict accuracy: The whole sequence must match the target buffer
+            # (excluding the initial PADs which are 0 in both)
+            match = (pred_buf == tgt_buf)
+            seq_acc = match.all(axis=1).mean()
+            
+            accuracies.append(seq_acc)
+            print(f"Len {L}: {seq_acc:.2%}")
+            
+        final_results[name] = accuracies
+
+    plt.figure(figsize=(10, 6))
+    sns.set_style("whitegrid")
+
+    colors = ["#1f77b4", "#ff7f0e", "#2ca02c"]
+    markers = ['o', 's', '^']
+
+    for i, (name, accs) in enumerate(final_results.items()):
+        plt.plot(TEST_LENGTHS, accs, 
+                label=name, 
+                marker=markers[i], 
+                linewidth=2.5, 
+                markersize=8,
+                alpha=0.8)
+
+    # Add a vertical line to show where training distribution ends
+    plt.axvline(x=60, color='gray', linestyle='--', alpha=0.6, label="Max Train Length (60)")
+
+    plt.title("OOD Generalization: Accuracy vs. String Length", fontsize=14)
+    plt.xlabel("String Length (Bits)", fontsize=12)
+    plt.ylabel("Sequence Accuracy (Exact Match)", fontsize=12)
+    plt.ylim(-0.05, 1.05)
+    plt.xticks(TEST_LENGTHS)
+    plt.legend(fontsize=11)
     plt.tight_layout()
-    plt.savefig("stack_benchmark.png")
+    plt.show()
