@@ -4,46 +4,134 @@ from flax import linen as nn
 from constants import *
 from stack_utils import update_stack, soft_update_stack
 
-class StackMachineCell(nn.Module):
+MAX_LEN = 2 * TEST_SEQ_LENGTH + 2
+
+class StackRNNCell(nn.Module):
+    """single step of the auto-regressive StackRNN."""
     stack_depth: int = STACK_DEPTH
     
     @nn.compact
-    def __call__(self, carry, inputs):
-        stack, ptr, r_prev, s_prev = carry
-        x_t, true_act, true_s, use_forcing = inputs
+    def __call__(self, carry, x_emb):
+        stack, state_prev = carry
         
-        # Embedding
-        x_emb = nn.Embed(VOCAB_SIZE, HIDDEN_DIM)(x_t)
-        s_emb = jax.nn.one_hot(s_prev, NUM_STATES)
-        r_emb = jax.nn.one_hot(r_prev, STACK_VOCAB_SIZE)
+        stack_top = stack[:, 0]
         
-        flat_input = jnp.concatenate([x_emb, s_emb, r_emb], axis=-1)
+        #state_emb = jax.nn.one_hot(state_prev, NUM_STATES)
+        state_emb = nn.Dense(HIDDEN_DIM, name="state_embed")(state_prev)
+        stack_top_emb = nn.Dense(HIDDEN_DIM, name="stack_top_embed")(stack_top)         
+        flat_input = jnp.concatenate([x_emb, state_emb, stack_top_emb], axis=-1)
         
-        # Controller
         logits_mem = nn.Dense(NUM_MEM_ACTIONS)(flat_input)
-        logits_buf = nn.Dense(NUM_BUF_ACTIONS)(flat_input)
+        logits_buf = nn.Dense(VOCAB_SIZE)(flat_input)
         logits_state = nn.Dense(NUM_STATES)(flat_input)
         
-        # Select Action
-        pred_act = jnp.argmax(logits_mem, axis=-1)
-        pred_state = jnp.argmax(logits_state, axis=-1)
+        action_probs = nn.softmax(logits_mem)
         
-        # Teacher Forcing
-        action_to_exec = jnp.where(use_forcing > 0, true_act, pred_act)
-        next_s = jnp.where(use_forcing > 0, true_s, pred_state)
-        
-        # Stack Update
-        stack_new, ptr_new, r_new = jax.vmap(update_stack)(stack, ptr, action_to_exec)
-        
-        new_carry = (stack_new, ptr_new, r_new, next_s)
-        return new_carry, (logits_mem, logits_buf, logits_state)
+        stack_new, _ = jax.vmap(soft_update_stack)(stack, action_probs)
 
-class NeuralStackMachine(nn.Module):
+        next_state = nn.softmax(logits_state, axis=-1)
+        new_carry = (stack_new, next_state)
+        return new_carry, logits_buf
+
+class StackRNN(nn.Module):
+    """An auto-regressive StackRNN model."""
+    cell_cls = StackRNNCell
+    
     @nn.compact
-    def __call__(self, x, true_actions, true_states, use_forcing):
+    def embed(self, x):
+        """A separate method for embedding the input."""
+        x_emb = nn.Embed(VOCAB_SIZE, HIDDEN_DIM, name="input_embed")(x)
+        return x_emb
+
+    @nn.compact
+    def __call__(self, x):
         batch_size, seq_len = x.shape
+        x_with_pos = self.embed(x)
         
         # Init Carry
+        init_stack = jnp.zeros((batch_size, STACK_DEPTH, STACK_VOCAB_SIZE))
+        init_stack = init_stack.at[:, :, STACK_NULL].set(1.0)
+        init_state = jnp.zeros((batch_size,NUM_STATES), dtype=jnp.float32)
+        carry = (init_stack, init_state)
+        
+        scan_layer = nn.scan(self.cell_cls, variable_broadcast="params", 
+                             split_rngs={"params": False}, in_axes=1, out_axes=1)
+        
+        final_carry, logits_buf = scan_layer()(carry, x_with_pos)
+        
+        return logits_buf, final_carry
+
+
+
+
+
+
+
+
+
+# --- Old Models---
+
+class HardStackRNNCell_old(nn.Module):
+    stack_depth: int = STACK_DEPTH
+    ste_type: str = 'straight_through'
+    
+    @nn.compact
+    def __call__(self, carry, inputs):
+        stack, ptr, r_prev, state_prev = carry
+        x_emb, true_act, true_s, use_forcing, gumbel_temperature = inputs
+        
+        state_emb = jax.nn.one_hot(state_prev, NUM_STATES)
+        reg_emb = jax.nn.one_hot(r_prev, STACK_VOCAB_SIZE)
+        
+        stack_not_empty = (ptr > 0).astype(jnp.float32)[:, None]
+        
+        flat_input = jnp.concatenate([x_emb, state_emb, reg_emb, stack_not_empty], axis=-1)
+        
+        logits_mem = nn.Dense(NUM_MEM_ACTIONS)(flat_input)
+        
+        if self.ste_type == 'straight_through':
+            y_soft = nn.softmax(logits_mem, axis=-1)
+            pred_act_hard = jnp.argmax(logits_mem, axis=-1)
+        elif self.ste_type == 'gumbel_softmax':
+            gumbel_key = self.make_rng('gumbel')
+            gumbel_noise = jax.random.gumbel(gumbel_key, logits_mem.shape)
+            temp = gumbel_temperature[:, None]
+            y_soft = nn.softmax((logits_mem + gumbel_noise) / temp)
+            pred_act_hard = jnp.argmax(y_soft, axis=-1)
+        else:
+            raise ValueError(f"Unknown STE type: {self.ste_type}")
+
+        y_hard = jax.nn.one_hot(pred_act_hard, logits_mem.shape[-1])
+        pred_act_ste = y_soft + jax.lax.stop_gradient(y_hard - y_soft)
+        
+        logits_mem = pred_act_ste + jax.lax.stop_gradient(logits_mem - pred_act_ste)
+
+        stack_new, ptr_new, r_new = jax.vmap(update_stack)(stack, ptr, pred_act_hard)
+        
+        r_new_emb = jax.nn.one_hot(r_new, STACK_VOCAB_SIZE)
+
+        flat_input_rest = jnp.concatenate([x_emb, state_emb, r_new_emb], axis=-1)
+
+        logits_buf = nn.Dense(NUM_BUF_ACTIONS)(flat_input_rest)
+        logits_state = nn.Dense(NUM_STATES)(flat_input_rest)
+        
+        next_state = jnp.argmax(logits_state, axis=-1)
+        
+        new_carry = (stack_new, ptr_new, r_new, next_state)
+        return new_carry, (logits_mem, logits_buf, logits_state)
+
+class HardStackRNN_old(nn.Module):
+    ste_type: str = 'straight_through'
+
+    @nn.compact
+    def __call__(self, x, true_actions, true_states, use_forcing, gumbel_temperature=1.0):
+        batch_size, seq_len = x.shape
+        
+        x_emb = nn.Embed(VOCAB_SIZE, HIDDEN_DIM, name="input_embed")(x)
+        positions = jnp.arange(seq_len)
+        pos_emb = nn.Embed(num_embeddings=MAX_LEN, features=HIDDEN_DIM, name="position_embed")(positions)
+        x_with_pos = x_emb + pos_emb
+        
         init_stack = jnp.zeros((batch_size, STACK_DEPTH), dtype=jnp.int32)
         init_ptr = jnp.zeros((batch_size,), dtype=jnp.int32)
         init_reg = jnp.zeros((batch_size,), dtype=jnp.int32)
@@ -51,29 +139,36 @@ class NeuralStackMachine(nn.Module):
         carry = (init_stack, init_ptr, init_reg, init_state)
         
         forcing_seq = jnp.full((batch_size, seq_len), use_forcing, dtype=jnp.int32)
-        scan_inputs = (x, true_actions, true_states, forcing_seq)
+        temp_seq = jnp.full((batch_size, seq_len), gumbel_temperature, dtype=jnp.float32)
+
+        scan_inputs = (x_with_pos, true_actions, true_states, forcing_seq, temp_seq)
         
-        scan_layer = nn.scan(StackMachineCell, variable_broadcast="params", 
-                             split_rngs={"params": False}, in_axes=1, out_axes=1)
+        scan_layer = nn.scan(
+            HardStackRNNCell_old, 
+            variable_broadcast="params", 
+            split_rngs={'params': False, 'gumbel': True}, 
+            in_axes=1, 
+            out_axes=1,
+            )
         
-        _, outputs = scan_layer()(carry, scan_inputs)
-        return outputs # (logits_mem, logits_buf, logits_state)
+        _, outputs = scan_layer(ste_type=self.ste_type)(carry, scan_inputs)
+        return outputs
 
 
-class SoftStackMachineCell(nn.Module):
+class SoftStackRNNCell_old(nn.Module):
     stack_depth: int = STACK_DEPTH
     
     @nn.compact
     def __call__(self, carry, inputs):
-        stack, r_prev, s_prev = carry
-        x_t, true_act, true_s, use_forcing = inputs
+        stack, r_prev, state_prev = carry
+        x_emb, true_act, true_s, use_forcing, _ = inputs
         
-        # Embeddings (r_prev is now a vector, not an int index)
-        x_emb = nn.Embed(VOCAB_SIZE, HIDDEN_DIM)(x_t)
-        s_emb = jax.nn.one_hot(s_prev, NUM_STATES)
+        state_emb = jax.nn.one_hot(state_prev, NUM_STATES)
         r_emb = nn.Dense(HIDDEN_DIM)(r_prev) 
         
-        flat_input = jnp.concatenate([x_emb, s_emb, r_emb], axis=-1)
+        stack_not_empty = (1.0 - stack[:, 0, STACK_NULL])[:, None]
+        
+        flat_input = jnp.concatenate([x_emb, state_emb, r_emb, stack_not_empty], axis=-1)
         
         logits_mem = nn.Dense(NUM_MEM_ACTIONS)(flat_input)
         logits_buf = nn.Dense(NUM_BUF_ACTIONS)(flat_input)
@@ -81,24 +176,22 @@ class SoftStackMachineCell(nn.Module):
         
         action_probs = nn.softmax(logits_mem)
         
-        # Teacher Forcing 
-        # Always 1 or 0 anyways
-        true_act_onehot = jax.nn.one_hot(true_act, NUM_MEM_ACTIONS)
-        forcing_gate = use_forcing[:, None]
-        probs_to_exec = (forcing_gate * true_act_onehot) + ((1.0 - forcing_gate) * action_probs)
+        stack_new, r_new = jax.vmap(soft_update_stack)(stack, action_probs)
+
+        next_state = jnp.argmax(logits_state, axis=-1)
         
-        pred_state = jnp.argmax(logits_state, axis=-1)
-        next_s = jnp.where(use_forcing > 0, true_s, pred_state)
-        
-        stack_new, r_new = jax.vmap(soft_update_stack)(stack, probs_to_exec)
-        
-        new_carry = (stack_new, r_new, next_s)
+        new_carry = (stack_new, r_new, next_state)
         return new_carry, (logits_mem, logits_buf, logits_state)
 
-class NeuralSoftStackMachine(nn.Module):
+class SoftStackRNN_old(nn.Module):
     @nn.compact
-    def __call__(self, x, true_actions, true_states, use_forcing):
+    def __call__(self, x, true_actions, true_states, use_forcing, gumbel_temperature=1.0):
         batch_size, seq_len = x.shape
+        
+        x_emb = nn.Embed(VOCAB_SIZE, HIDDEN_DIM, name="input_embed")(x)
+        positions = jnp.arange(seq_len)
+        pos_emb = nn.Embed(num_embeddings=MAX_LEN, features=HIDDEN_DIM, name="position_embed")(positions)
+        x_with_pos = x_emb + pos_emb
         
         init_stack = jnp.zeros((batch_size, STACK_DEPTH, STACK_VOCAB_SIZE))
         init_stack = init_stack.at[:, :, STACK_NULL].set(1.0)
@@ -107,28 +200,26 @@ class NeuralSoftStackMachine(nn.Module):
         
         carry = (init_stack, init_reg, init_state)
         forcing_seq = jnp.full((batch_size, seq_len), use_forcing, dtype=jnp.float32)
+        temp_seq = jnp.full((batch_size, seq_len), gumbel_temperature, dtype=jnp.float32)
+
+        scan_inputs = (x_with_pos, true_actions, true_states, forcing_seq, temp_seq)
         
-        scan_inputs = (x, true_actions, true_states, forcing_seq)
-        
-        scan_layer = nn.scan(SoftStackMachineCell, variable_broadcast="params", 
+        scan_layer = nn.scan(SoftStackRNNCell_old, variable_broadcast="params", 
                              split_rngs={"params": False}, in_axes=1, out_axes=1)
         
         _, outputs = scan_layer()(carry, scan_inputs)
         return outputs
 
-
-class VanillaLSTM(nn.Module):
+class VanillaLSTM_old(nn.Module):
     @nn.compact
-    def __call__(self, x, true_actions, true_states, use_forcing):
-        # We ignore true_actions/states/forcing for the baseline 
-        # as it just learns seq to seq mapping directly
-        
+    def __call__(self, x, true_actions, true_states, use_forcing, gumbel_temperature=1.0):
         batch_size, seq_len = x.shape
         
-        # Embed
-        x_emb = nn.Embed(VOCAB_SIZE, HIDDEN_DIM)(x) # [B, T, H]
+        x_emb = nn.Embed(VOCAB_SIZE, HIDDEN_DIM)(x)
+        positions = jnp.arange(seq_len)
+        pos_emb = nn.Embed(num_embeddings=MAX_LEN, features=HIDDEN_DIM, name="position_embed")(positions)
+        x_with_pos = x_emb + pos_emb
         
-        # LSTM Scan
         lstm_layer = nn.scan(
             nn.LSTMCell,
             variable_broadcast="params", 
@@ -137,94 +228,41 @@ class VanillaLSTM(nn.Module):
             out_axes=1
         )(features=HIDDEN_DIM)
         
-        # Initial Carry: (c, h)
         dummy_cell = nn.LSTMCell(features=HIDDEN_DIM)
         carry = dummy_cell.initialize_carry(jax.random.PRNGKey(0), (batch_size, HIDDEN_DIM))
         
-        final_carry, hidden_states = lstm_layer(carry, x_emb)
+        _, hidden_states = lstm_layer(carry, x_with_pos)
         
-        # Output 
         logits_buf = nn.Dense(NUM_BUF_ACTIONS)(hidden_states)
         
-        # Return same structure as others for compatibility (mem/state logits are dummies)
         dummy_logits = jnp.zeros((batch_size, seq_len, 1)) 
         return dummy_logits, logits_buf, dummy_logits
 
-
-
-class SequentialStackMachineCell(nn.Module):
-    """
-    A Stack Machine where the controller steps are sequential:
-    READ: Decide memory action based on (x, s_prev, r_prev) -> Update Stack -> Get r_new
-    EMIT: Decide buffer output based on (x, s_prev, r_new)
-    TRANSIT: Decide next state based on (x, s_prev, r_new)
-    """
-    stack_depth: int = STACK_DEPTH
+class Transformer_old(nn.Module):
+    num_heads: int = 4
+    num_layers: int = 2
+    qkv_dim: int = HIDDEN_DIM
     
     @nn.compact
-    def __call__(self, carry, inputs):
-        stack, ptr, r_prev, s_prev = carry
-        x_t, true_act, true_s, use_forcing = inputs
-                
-        # Embeddings for read
-        x_emb = nn.Embed(VOCAB_SIZE, HIDDEN_DIM)(x_t)
-        s_emb = jax.nn.one_hot(s_prev, NUM_STATES)
-        r_prev_emb = jax.nn.one_hot(r_prev, STACK_VOCAB_SIZE)
-        
-        # Concatenate inputs for the Memory Controller
-        flat_input_mem = jnp.concatenate([x_emb, s_emb, r_prev_emb], axis=-1)
-        
-        # Decide Memory Action
-        logits_mem = nn.Dense(NUM_MEM_ACTIONS)(flat_input_mem)
-        pred_act = jnp.argmax(logits_mem, axis=-1)
-        
-        # Handle Teacher Forcing for Action
-        action_to_exec = jnp.where(use_forcing > 0, true_act, pred_act)
-        
-        # 2. Execute Stack Update
-        # This gives us r_new (the value popped, or NULL if push/noop)
-        stack_new, ptr_new, r_new = jax.vmap(update_stack)(stack, ptr, action_to_exec)
-        
-        
-        # Embed r_new
-        r_new_emb = jax.nn.one_hot(r_new, STACK_VOCAB_SIZE)
-        
-        # Concatenate inputs for the Buffer/State Controller
-        # reuse x_emb and s_emb as they are unchanged within this step
-        flat_input_rest = jnp.concatenate([x_emb, s_emb, r_new_emb], axis=-1)
-        
-        # Emit
-        logits_buf = nn.Dense(NUM_BUF_ACTIONS)(flat_input_rest)
-        
-        # Transit
-        logits_state = nn.Dense(NUM_STATES)(flat_input_rest)
-        pred_state = jnp.argmax(logits_state, axis=-1)
-        
-
-        next_s = jnp.where(use_forcing > 0, true_s, pred_state)
-        
-        # Pack new carry
-        new_carry = (stack_new, ptr_new, r_new, next_s)
-        return new_carry, (logits_mem, logits_buf, logits_state)
-
-class SequentialStackMachine(nn.Module):
-    @nn.compact
-    def __call__(self, x, true_actions, true_states, use_forcing):
+    def __call__(self, x, true_actions, true_states, use_forcing, gumbel_temperature=1.0):
         batch_size, seq_len = x.shape
         
-        # Init Carry
-        init_stack = jnp.zeros((batch_size, STACK_DEPTH), dtype=jnp.int32)
-        init_ptr = jnp.zeros((batch_size,), dtype=jnp.int32)
-        init_reg = jnp.zeros((batch_size,), dtype=jnp.int32)
-        init_state = jnp.zeros((batch_size,), dtype=jnp.int32)
-        carry = (init_stack, init_ptr, init_reg, init_state)
+        x_emb = nn.Embed(VOCAB_SIZE, HIDDEN_DIM)(x)
+        positions = jnp.arange(seq_len)
+        pos_emb = nn.Embed(num_embeddings=MAX_LEN, features=HIDDEN_DIM, name="position_embed")(positions)
+        x_with_pos = x_emb + pos_emb
         
-        forcing_seq = jnp.full((batch_size, seq_len), use_forcing, dtype=jnp.int32)
-        scan_inputs = (x, true_actions, true_states, forcing_seq)
+        for _ in range(self.num_layers):
+            x_attn = nn.SelfAttention(num_heads=self.num_heads, qkv_features=self.qkv_dim)(x_with_pos)
+            x_with_pos = nn.LayerNorm()(x_with_pos + x_attn)
+            
+            x_ff = nn.Dense(features=self.qkv_dim * 2)(x_with_pos)
+            x_ff = nn.relu(x_ff)
+            x_ff = nn.Dense(features=self.qkv_dim)(x_ff)
+            x_with_pos = nn.LayerNorm()(x_with_pos + x_ff)
+
+        logits_buf = nn.Dense(NUM_BUF_ACTIONS)(x_with_pos)
         
-        # Use the Sequential Cell
-        scan_layer = nn.scan(SequentialStackMachineCell, variable_broadcast="params", 
-                             split_rngs={"params": False}, in_axes=1, out_axes=1)
+        dummy_logits = jnp.zeros((batch_size, seq_len, 1))
         
-        _, outputs = scan_layer()(carry, scan_inputs)
-        return outputs
+        return dummy_logits, logits_buf, dummy_logits

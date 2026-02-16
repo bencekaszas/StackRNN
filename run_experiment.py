@@ -1,180 +1,231 @@
 import jax
 import jax.numpy as jnp
 from flax.training import train_state
+from flax import linen as nn
 import optax
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
+from functools import partial
+
+
 
 from constants import *
 from data_gen import generate_rev_trace, generate_fixed_batch
-from models import NeuralStackMachine, NeuralSoftStackMachine, VanillaLSTM, SequentialStackMachine
+from models import StackRNN
 
-def create_train_state(model_class, key):
-    model = model_class()
-    dummy_x = jnp.zeros((1, SEQ_LENGTH), dtype=jnp.int32)
-    # Init with dummy inputs
-    params = model.init(key, dummy_x, dummy_x, dummy_x, use_forcing=False)
-    tx = optax.adam(LEARNING_RATE)
+def create_train_state(model, key, learning_rate, dummy_input):
+    params = model.init(key, dummy_input)['params']
+    tx = optax.chain(
+        optax.adam(learning_rate)
+    )
     return train_state.TrainState.create(apply_fn=model.apply, params=params, tx=tx)
 
+def masked_loss(logits, targets, mask):
+    """Masked softmax cross-entropy loss."""
+    loss = optax.softmax_cross_entropy_with_integer_labels(logits, targets)
+    masked_loss = loss * mask
+    return masked_loss.sum() / jnp.maximum(mask.sum(), 1e-9)
 
 @jax.jit
-def train_step(state, batch, use_forcing, supervise_trace):
-    inputs, tgt_mem, tgt_buf, tgt_state = batch
+def train_step(state, batch):
+    inputs, targets, mask = batch
     
     def loss_fn(params):
-        logits = state.apply_fn(params, inputs, tgt_mem, tgt_state, use_forcing)
-        l_mem, l_buf, l_state = logits
-        
-        # Main Buffer Loss
-        loss_b = optax.softmax_cross_entropy_with_integer_labels(l_buf, tgt_buf).mean()
-        
-        # Extra Losses (only if model outputs them)
-        # Check shape of logits to determine if dummy
-        loss_m = 0.0
-        loss_s = 0.0
-        if l_mem.shape[-1] > 1:
-            loss_m = optax.softmax_cross_entropy_with_integer_labels(l_mem, tgt_mem).mean()
-            loss_s = optax.softmax_cross_entropy_with_integer_labels(l_state, tgt_state).mean()
-            
-        total_loss = loss_b + (loss_m + loss_s) * supervise_trace
-        acc = (jnp.argmax(l_buf, -1) == tgt_buf).mean()
-        return total_loss, acc
+        logits, _ = state.apply_fn({'params': params}, x=inputs)
+        loss = masked_loss(logits, targets, mask)
+        acc = ((jnp.argmax(logits, -1) == targets) * mask).sum() / jnp.maximum(mask.sum(), 1e-9)
+        return loss, acc
         
     (loss, acc), grads = jax.value_and_grad(loss_fn, has_aux=True)(state.params)
-    new_state = state.apply_gradients(grads=grads)
-    return new_state, loss, acc
+    
+    state = state.apply_gradients(grads=grads)
+    return state, loss, acc
 
-def evaluate(state, seq_len, n_samples=100):
-    inputs, tgt_mem, tgt_buf, tgt_state = generate_rev_trace(n_samples, seq_len)
-    
-    # Inference
-    logits = state.apply_fn(state.params, inputs, tgt_mem, tgt_state, False)
-    pred_buf = jnp.argmax(logits[1], -1)
-    
-    # Accuracy: fraction of perfectly correct sequences
-    # (Checking exact match on output buffer)
-    # We ignore PAD tokens in accuracy? Usually for reverse task we check exact string match.
-    token_acc = (pred_buf == tgt_buf).mean()
-    return token_acc
+# def get_initial_carry(state, prompt):
+#     batch_size = prompt.shape[0]
 
-def run(model_name, model_class, supervise_trace=True):
-    print(f"\n--- Training {model_name} ---")
-    key = jax.random.PRNGKey(42)
-    state = create_train_state(model_class, key)
+#     init_stack = jnp.zeros((batch_size, STACK_DEPTH, STACK_VOCAB_SIZE))
+#     init_stack = init_stack.at[:, :, STACK_NULL].set(1.0)
+#     init_state = jnp.zeros((batch_size, NUM_STATES), dtype=jnp.float32)
+#     carry = (init_stack, init_state)
     
-    history = {"step": [], "train_acc": [], "id_acc": [], "ood_acc": []}
+#     prompt_emb = nn.Embed(VOCAB_SIZE, HIDDEN_DIM, name="input_embed").apply({'params': state.params['input_embed']}, prompt)
     
-    for step in range(STEPS):
-        batch = generate_rev_trace(BATCH_SIZE, SEQ_LENGTH)
+#     cell = StackRNN.cell_cls()
+#     for i in range(prompt.shape[1]):
+#         x_emb_step = prompt_emb[:, i]
+#         carry, _ = cell.apply({'params': state.params['ScanStackRNNCell_0']}, carry, x_emb_step)
+
+#     return carry
+
+def evaluate(state, prompt, max_len=100):
+    """Auto-regressive decoding with efficient state passing."""
+    _, carry = state.apply_fn({'params': state.params}, x=prompt)
+
+    #carry = (carry[0][:, -1:], carry[1])  
+
+    decoder_input = jnp.full((prompt.shape[0], 1), VOCAB_EQ, dtype=jnp.int32)
+    generated_sequence = []
+    
+    cell = StackRNN.cell_cls()
+    embed_params = state.params['input_embed']
+
+    for _ in range(max_len):
+        decoder_emb = nn.Embed(VOCAB_SIZE, HIDDEN_DIM, name="input_embed").apply({'params': embed_params}, decoder_input)
         
-        trace_weight = 1.0 if supervise_trace else 0.0
-        state, loss, acc = train_step(state, batch, use_forcing=False, supervise_trace=trace_weight)
+        carry, logits = cell.apply({'params': state.params['ScanStackRNNCell_0']}, carry, decoder_emb[:, 0])
         
-        if step % EVAL_FREQ == 0:
-            id_acc = evaluate(state, SEQ_LENGTH)
-            ood_acc = evaluate(state, TEST_SEQ_LENGTH)
-            
-            history["step"].append(step)
-            history["train_acc"].append(acc)
-            history["id_acc"].append(id_acc)
-            history["ood_acc"].append(ood_acc)
-            
-            print(f"Step {step:4d} | Train Acc: {acc:.2%} | ID Acc: {id_acc:.2%} | OOD Acc: {ood_acc:.2%}")
-            
-    return history
+        next_token = jnp.argmax(logits, axis=-1)
+        generated_sequence.append(next_token)
+        
+        if (next_token == VOCAB_EOS).all():
+            break
 
-#TODO: fix datagen with seq stack - we evaluate against shifted register
-# add XOR task? for that models need nonlinearity i.e. Relu
+        decoder_input = next_token[:, None]
+
+    return jnp.concatenate(generated_sequence, axis=0)
+
+
+
+
+def evaluate_recursive(state, prompt, max_len=100):
+    """Auto-regressive decoding."""
+    generated_sequence = prompt
+    
+    for _ in range(max_len):
+        logits, _ = state.apply_fn({'params': state.params}, x=generated_sequence)
+        next_token_logits = logits[:, -1, :] # Logits for the next token
+        next_token = jnp.argmax(next_token_logits, axis=-1)
+        
+        if next_token[0] == VOCAB_EOS:
+            break
+            
+        generated_sequence = jnp.concatenate([generated_sequence, next_token[:, None]], axis=1)
+        
+    return generated_sequence
+
+
 
 
 
 if __name__ == "__main__":
-    # --- Configuration ---
-    MODELS_TO_RUN = {
-        "Unsupervised Soft Stack": (NeuralSoftStackMachine, False), # (Class, supervise_trace)
-        "Unsupervised Seq Stack": (SequentialStackMachine, False),
-        "Vanilla LSTM": (VanillaLSTM, False)
-    }
-
+    model = StackRNN()
+    
     TEST_LENGTHS = [10, 20, 40, 60, 70, 80, 100, 120, 140]
-    TRAINING_SEQ_LEN = 60 # Standard training length
-    N_EVAL_SAMPLES = 200  # Samples per length check
+    TRAINING_SEQ_LEN = SEQ_LENGTH
+    N_EVAL_SAMPLES = 100
 
     final_results = {}
 
-    # --- Main Loop ---
-    for name, (model_cls, supervise) in MODELS_TO_RUN.items():
-        print(f"\n=== Training {name} ===")
-        
-        # 1. Train
-        # We use the standard training routine provided in your context
-        # Assuming 'run' returns the training history and the final state
-        # (Note: I'll adapt the 'run' logic slightly to return the trained state)
-        
-        key = jax.random.PRNGKey(42)
-        state = create_train_state(model_cls, key)
-        
-        # Train Loop (Simplified from your run code)
-        for step in range(2001): # 2000 steps
-            batch = generate_rev_trace(BATCH_SIZE, TRAINING_SEQ_LEN)
-            trace_weight = 1.0 if supervise else 0.0
-            state, loss, acc = train_step(state, batch, use_forcing=False, supervise_trace=trace_weight)
-            
-            if step % 500 == 0:
-                print(f"Step {step} | Train Acc: {acc:.2%}")
+    # Main loop
+    print(f"\n=== Training StackRNN ===")
+    
+    key = jax.random.PRNGKey(42)
+    dummy_input = jnp.zeros((1, 2 * TRAINING_SEQ_LEN + 2), dtype=jnp.int32)
+    state = create_train_state(model, key, LEARNING_RATE, dummy_input)
 
-        # 2. Evaluate OOD (The specific graph you want)
-        print(f"--- Evaluating OOD for {name} ---")
-        accuracies = []
-        
-        for L in TEST_LENGTHS:
-            # Generate FIXED length batch
-            batch = generate_fixed_batch(N_EVAL_SAMPLES, L)
-            inputs, tgt_mem, tgt_buf, tgt_state = batch
-            
-            # Run Inference
-            # Note: We must allow JAX to re-compile for new shapes if necessary, 
-            # or rely on dynamic shapes if enabled. 
-            # Since 'state.apply_fn' is jitted inside 'train_step' but here we call it raw:
-            logits = state.apply_fn(state.params, inputs, tgt_mem, tgt_state, False)
-            
-            # Calculate Accuracy
-            pred_buf = jnp.argmax(logits[1], -1)
-            
-            # Strict accuracy: The whole sequence must match the target buffer
-            # (excluding the initial PADs which are 0 in both)
-            match = (pred_buf == tgt_buf)
-            seq_acc = match.all(axis=1).mean()
-            
-            accuracies.append(seq_acc)
-            print(f"Len {L}: {seq_acc:.2%}")
-            
-        final_results[name] = accuracies
+    print(state.params.keys())
+
+
+    #Train Loop
+    losses = []
+    accs = []
+    for step in range(STEPS + 1):
+        rand_max_len = np.random.randint(10, TRAINING_SEQ_LEN + 1)
+        batch = generate_rev_trace(BATCH_SIZE, rand_max_len)
+        state, loss, acc = train_step(state, batch)
+        losses.append(loss)
+        accs.append(acc)
+        if step % 500 == 0:
+            print(f"Step {step} | Train Loss: {loss:.4f} | Train Acc: {acc:.2%}")
 
     plt.figure(figsize=(10, 6))
+    plt.plot(losses)
+    plt.title("Training Loss Curve")
+    plt.xlabel("Step")
+    plt.ylabel("Loss")
+    plt.savefig("training_loss_curve.png")
+
+    plt.figure(figsize=(10, 6))
+    plt.plot(accs)
+    plt.title("Training Accuracy Curve")
+    plt.xlabel("Step")
+    plt.ylabel("Accuracy")
+    plt.savefig("training_accuracy_curve.png")
+
+
+
+    
+    #evaluate OOD
+    print(f"--- Evaluating OOD for StackRNN ---")
+    seq_accuracies = []
+    token_accuracies = []
+    
+    for L in TEST_LENGTHS:
+        prompts = generate_fixed_batch(N_EVAL_SAMPLES, L)
+        correct_predictions = 0
+        
+        token_accuracies_l = []
+        for i in range(N_EVAL_SAMPLES):
+            prompt = prompts[i:i+1, :]
+            prompt_bits = prompt[0, :L]
+
+
+            #print(prompt)
+            generated = evaluate(state, jnp.array(prompt_bits[None, :]), max_len=L+5)
+            #generated2 = evaluate_recursive(state, prompt, max_len=L+5)
+            
+
+            generated_output = generated
+            #generated_output2 = generated2[0]
+            
+            # Create ground truth output
+            ground_truth = np.asarray(prompt_bits[::-1])
+            ground_truth = np.concatenate([ground_truth, [VOCAB_EOS]])
+            
+
+            is_correct = False
+            if len(generated_output) >= len(ground_truth):
+                if np.array_equal(generated_output[:len(ground_truth)], ground_truth):
+                    if len(generated_output) == len(ground_truth) or generated_output[len(ground_truth)] == VOCAB_EOS:
+                        is_correct = True
+
+            if is_correct:
+                correct_predictions += 1
+            
+            #print(generated_output, ground_truth)
+
+            # only check till the length of the ground truth for token accuracy
+            if len(generated_output) > len(ground_truth):
+                generated_output = generated_output[:len(ground_truth)]
+            elif len(generated_output) < len(ground_truth):
+                # Pad with EOS if generated output is shorter than ground truth
+                generated_output = np.concatenate([generated_output, [VOCAB_EOS] * (len(ground_truth) - len(generated_output))])
+
+            token_accuracy = (generated_output == ground_truth).mean()
+            token_accuracies_l.append(token_accuracy)
+                
+        seq_acc = correct_predictions / N_EVAL_SAMPLES
+        token_acc = np.mean(token_accuracies_l)
+        seq_accuracies.append(seq_acc)
+        token_accuracies.append(token_acc)
+        print(f"Len {L}: Seq Acc: {seq_acc:.2%} | Token Acc: {token_acc:.2%}")
+        
+    final_results["StackRNN"] = (seq_accuracies, token_accuracies)
+
+    # --- Plotting ---
+    plt.figure(figsize=(10, 6))
     sns.set_style("whitegrid")
-
-    colors = ["#1f77b4", "#ff7f0e", "#2ca02c"]
-    markers = ['o', 's', '^']
-
-    for i, (name, accs) in enumerate(final_results.items()):
-        plt.plot(TEST_LENGTHS, accs, 
-                label=name, 
-                marker=markers[i], 
-                linewidth=2.5, 
-                markersize=8,
-                alpha=0.8)
-
-    # Add a vertical line to show where training distribution ends
-    plt.axvline(x=60, color='gray', linestyle='--', alpha=0.6, label="Max Train Length (60)")
-
+    plt.plot(TEST_LENGTHS, final_results["StackRNN"][0], marker='o')
+    plt.plot(TEST_LENGTHS, final_results["StackRNN"][1], marker='x', label="Token Accuracy")
+    plt.axvline(x=60, color='gray', linestyle='--', label="Max Train Length (60)")
     plt.title("OOD Generalization: Accuracy vs. String Length", fontsize=14)
     plt.xlabel("String Length (Bits)", fontsize=12)
     plt.ylabel("Sequence Accuracy (Exact Match)", fontsize=12)
     plt.ylim(-0.05, 1.05)
     plt.xticks(TEST_LENGTHS)
-    plt.legend(fontsize=11)
+    plt.legend()
     plt.tight_layout()
     plt.show()
+    plt.savefig("ood_generalization_plot.png")

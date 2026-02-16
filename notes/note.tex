@@ -1,0 +1,95 @@
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{bm}
+
+\title{Backward / Forward Pass in Stack Rnns}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section{Controller}
+
+At time $t$, controller receives input $\bm{x}_t$, previous register $\bm{r}_{t-1}$ and state $\bm{s}_{t-1}$. It outputs logits $\bm{z}_t$ for the action, state and buffer probabilities. When processed sequentually, we first embed and concat the inputs:
+\begin{equation*}
+    \bm{h}_t = [\text{Embed}(\bm{x}_t); \text{OneHot}(\bm{r}_{t-1}); \text{OneHot}(\bm{s}_{t-1})]
+\end{equation*}
+
+First we compute the action logits:
+\begin{equation*}
+    \bm{z}_t = \mathbf{W}_a \bm{h}_t
+\end{equation*}
+
+Using the hard/soft stack update functions (as defined below), we compute the new register $\bm{r}_t$.  We then use this to compute the state and buffer logits:
+\begin{align*}
+    \bm{h}_{t_{new}} &= [\text{Embed}(\bm{x}_t); \text{OneHot}(\bm{r}_{t}); \text{OneHot}(\bm{s}_{t-1})] \\
+    \bm{s}_t &= \mathbf{W}_s \bm{h}_{t_{new}} \\
+    \bm{b}_t &= \mathbf{W}_b \bm{h}_{t_{new}}
+\end{align*}
+
+The state in both the hard and soft versions is computed as $\bm{s}_t = \operatorname{argmax}(\bm{s}_t)$. We take the buffer logit and use it directly when calculating the buffer loss.
+
+\section{Hard Stack }
+Stack has a pointer $\text{ptr}_t \in \mathbb{Z}$ and memory $\mathbf{M}_t \in \mathbb{R}^D$ for stack size $D$. Controller outputs action logits $\bm{z} \in \mathbb{R}^4$ (NOOP, PUSH\_0, PUSH\_1, POP).
+
+\subsection{Forward pass}
+
+model selects index $k^* = \operatorname{argmax}(\bm{z})$. The new stack $S_t$ is given by 
+\begin{equation*}
+    S_{t+1} = 
+    \begin{cases} 
+        (\mathbf{M}_t, ptr_t) & \text{if } k^* = \text{NOOP} \\
+        (\mathbf{M}_t[\dots], ptr_t + 1) & \text{if } k^* = \text{PUSH\_0} , \text{PUSH\_1}\\
+        (\mathbf{M}_t[\dots], ptr_t - 1) & \text{if } k^* = \text{POP}
+    \end{cases}
+\end{equation*}
+
+\subsection{Backward pass}
+We want the gradient of the loss $\mathcal{L}$ wrt.\ the controller logits $\bm{z}$. By chain rule:
+\begin{equation*}
+    \frac{\partial \mathcal{L}}{\partial \bm{z}} = \frac{\partial \mathcal{L}}{\partial S_{t+1}} \cdot \frac{\partial S_{t+1}}{\partial k^*} \cdot \underbrace{\frac{\partial k^*}{\partial \bm{z}}}_{\mathbf{0}}
+\end{equation*}
+
+
+\section{Soft Stack}
+
+Let the state at time $t$ be the matrix $\mathbf{V}_t \in \mathbb{R}^{D \times 3}$, where $D$ is the stack depth. Row $d$ represents the probability distribution of the symbol stored at depth $d$.
+
+\subsection{Forward pass}
+Controller outputs action probabilities $\bm{p} \in \mathbb{R}^4$ (NOOP, PUSH\_0, PUSH\_1, POP). The next state is computed as a weighted sum of three transformations of the current stack:
+
+
+\begin{enumerate}
+    \item \textbf{NOOP:} $\mathbf{V}_{\text{hold}} = \mathbf{V}_t$
+    \item \textbf{Push/ Shift down:} $\mathbf{V}_{\text{down}} = \operatorname{Roll}(\mathbf{V}_t, +1)$. The top row is overwritten with the pushed value vector $\bm{v}_{\text{push}}$ (derived from PUSH\_0/PUSH\_1 ratio).
+    \item \textbf{Pop/ Shift up:} $\mathbf{V}_{\text{up}} = \operatorname{Roll}(\mathbf{V}_t, -1)$. The bottom row is padded with nulls.
+\end{enumerate}
+
+The update is a linear combination:
+\begin{equation*}
+    \mathbf{V}_{t+1} = p_{\text{noop}} \cdot \mathbf{V}_{\text{hold}} + (p_{\text{push0}} + p_{\text{push1}}) \cdot \mathbf{V}_{\text{down}} + p_{\text{pop}} \cdot \mathbf{V}_{\text{up}}
+\end{equation*}
+
+\subsection{Backward pass}
+We want the gradient of the loss $\mathcal{L}$ wrt.\ the controller logits $\bm{z}$. By chain rule:
+
+\begin{equation*}
+    \frac{\partial \mathcal{L}}{\partial z_j} = \sum_{k \in \text{Actions}} \left( \frac{\partial \mathcal{L}}{\partial \mathbf{V}_{t+1}} \cdot \frac{\partial \mathbf{V}_{t+1}}{\partial p_k} \cdot \frac{\partial p_k}{\partial z_j} \right)
+\end{equation*}
+
+$\frac{\partial \mathbf{V}_{t+1}}{\partial p_k}$ is the shifted matrix corresponding to action $k$, i.e.\ if $k=\text{POP}$:
+
+\begin{equation*}
+    \frac{\partial \mathbf{V}_{t+1}}{\partial p_{\text{pop}}} = \mathbf{V}_{\text{up}}
+\end{equation*}
+
+Here $\frac{\partial p_k}{\partial z_j}$ is given by the softmax derivative:
+
+\begin{equation*}
+    \frac{\partial p_k}{\partial z_j} = p_k (\delta_{kj} - p_j)
+\end{equation*}
+
+
+\end{document}
