@@ -7,12 +7,18 @@ import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
 from functools import partial
-
-
+import os
 
 from constants import *
 from data_gen import generate_rev_trace, generate_fixed_batch
 from models import StackRNN
+
+# Import constants for plotting
+from constants import ACT_PUSH_0, ACT_PUSH_1, ACT_POP, STACK_NULL
+from visualize import evaluate_and_visualize, plot_deepmind_style, plot_state_trajectory, plot_final_stack_distribution, plot_read_fidelity
+
+BASE_OUTPUT_DIR = "results/confidence_study_soft"
+os.makedirs(BASE_OUTPUT_DIR, exist_ok=True)
 
 def create_train_state(model, key, learning_rate, dummy_input):
     params = model.init(key, dummy_input)['params']
@@ -42,39 +48,30 @@ def train_step(state, batch):
     state = state.apply_gradients(grads=grads)
     return state, loss, acc
 
-# def get_initial_carry(state, prompt):
-#     batch_size = prompt.shape[0]
-
-#     init_stack = jnp.zeros((batch_size, STACK_DEPTH, STACK_VOCAB_SIZE))
-#     init_stack = init_stack.at[:, :, STACK_NULL].set(1.0)
-#     init_state = jnp.zeros((batch_size, NUM_STATES), dtype=jnp.float32)
-#     carry = (init_stack, init_state)
-    
-#     prompt_emb = nn.Embed(VOCAB_SIZE, HIDDEN_DIM, name="input_embed").apply({'params': state.params['input_embed']}, prompt)
-    
-#     cell = StackRNN.cell_cls()
-#     for i in range(prompt.shape[1]):
-#         x_emb_step = prompt_emb[:, i]
-#         carry, _ = cell.apply({'params': state.params['ScanStackRNNCell_0']}, carry, x_emb_step)
-
-#     return carry
-
-def evaluate(state, prompt, max_len=100):
+def evaluate(state, prompt, max_len=100, hard_actions=False):
     """Auto-regressive decoding with efficient state passing."""
-    _, carry = state.apply_fn({'params': state.params}, x=prompt)
-
-    #carry = (carry[0][:, -1:], carry[1])  
+    _, carry = state.apply_fn({'params': state.params}, x=prompt, hard_actions=hard_actions)
 
     decoder_input = jnp.full((prompt.shape[0], 1), VOCAB_EQ, dtype=jnp.int32)
     generated_sequence = []
+    action_confidences = [] # To store max action probs
     
-    cell = StackRNN.cell_cls()
-    embed_params = state.params['input_embed']
+    cell = StackRNN.cell_cls(hard_actions=hard_actions)
+    
+    embed_params = state.params.get('input_embed', None)
+    input_proj_params = state.params.get('input_proj', None)
 
     for _ in range(max_len):
-        decoder_emb = nn.Embed(VOCAB_SIZE, HIDDEN_DIM, name="input_embed").apply({'params': embed_params}, decoder_input)
+        if embed_params is not None:
+            decoder_emb = nn.Embed(VOCAB_SIZE, HIDDEN_DIM, name="input_embed").apply({'params': embed_params}, decoder_input)
+        else:
+            decoder_emb = jax.nn.one_hot(decoder_input, VOCAB_SIZE)
+            decoder_emb = nn.Dense(HIDDEN_DIM, name="input_proj").apply({'params': input_proj_params}, decoder_emb)
         
-        carry, logits = cell.apply({'params': state.params['ScanStackRNNCell_0']}, carry, decoder_emb[:, 0])
+        carry, (logits, action_probs) = cell.apply({'params': state.params['ScanStackRNNCell_0']}, carry, decoder_emb[:, 0])
+        
+        # Max prob as confidence metric (sharpness of policy)
+        action_confidences.append(jnp.max(action_probs, axis=-1))
         
         next_token = jnp.argmax(logits, axis=-1)
         generated_sequence.append(next_token)
@@ -84,148 +81,151 @@ def evaluate(state, prompt, max_len=100):
 
         decoder_input = next_token[:, None]
 
-    return jnp.concatenate(generated_sequence, axis=0)
+    return jnp.concatenate(generated_sequence, axis=0), np.mean(action_confidences)
 
-
-
-
-def evaluate_recursive(state, prompt, max_len=100):
-    """Auto-regressive decoding."""
-    generated_sequence = prompt
+def run_full_evaluation(state, milestone_step):
+    """Run a thorough OOD evaluation and save results to a milestone folder."""
+    output_dir = os.path.join(BASE_OUTPUT_DIR, f"step_{milestone_step}")
+    os.makedirs(output_dir, exist_ok=True)
     
-    for _ in range(max_len):
-        logits, _ = state.apply_fn({'params': state.params}, x=generated_sequence)
-        next_token_logits = logits[:, -1, :] # Logits for the next token
-        next_token = jnp.argmax(next_token_logits, axis=-1)
-        
-        if next_token[0] == VOCAB_EOS:
-            break
-            
-        generated_sequence = jnp.concatenate([generated_sequence, next_token[:, None]], axis=1)
-        
-    return generated_sequence
-
-
-
-
-
-if __name__ == "__main__":
-    model = StackRNN()
+    print(f"\n--- Running Milestone Evaluation (Step {milestone_step}) ---")
     
-    TEST_LENGTHS = [10, 20, 40, 60, 70, 80, 100, 120, 140]
-    TRAINING_SEQ_LEN = SEQ_LENGTH
-    N_EVAL_SAMPLES = 100
+    # 1. Generate Visualizations (moderate and long OOD)
+    # Using hard_actions=False as requested to see soft-stack evolution/drift
+    VIS_L = 40
+    vis_prompt = generate_fixed_batch(1, VIS_L)
+    full_seq, stack_hist, action_hist, state_hist = evaluate_and_visualize(state, vis_prompt, max_len=VIS_L+10, hard_actions=False)
+    plot_deepmind_style(full_seq, stack_hist, action_hist, os.path.join(output_dir, "stack_visualization.png"))
+    plot_state_trajectory(state_hist, VIS_L, os.path.join(output_dir, "state_trajectory.png"))
+    plot_read_fidelity(stack_hist, full_seq, VIS_L, os.path.join(output_dir, "read_fidelity.png"))
 
+    VIS_L_LONG = 300
+    vis_prompt_long = generate_fixed_batch(1, VIS_L_LONG)
+    full_seq_long, stack_hist_long, action_hist_long, state_hist_long = evaluate_and_visualize(state, vis_prompt_long, max_len=VIS_L_LONG+10, hard_actions=False)
+    plot_deepmind_style(full_seq_long, stack_hist_long, action_hist_long, os.path.join(output_dir, "stack_visualization_long.png"))
+    plot_state_trajectory(state_hist_long, VIS_L_LONG, os.path.join(output_dir, "state_trajectory_long.png"))
+    plot_read_fidelity(stack_hist_long, full_seq_long, VIS_L_LONG, os.path.join(output_dir, "read_fidelity_long.png"))
+    plot_final_stack_distribution(stack_hist_long, os.path.join(output_dir, "final_stack_dist.png"))
+
+    # 2. Accuracy Benchmarking
+    TEST_LENGTHS = [10, 20, 40, 60, 100, 200, 300, 400, 500]
     final_results = {}
-
-    # Main loop
-    print(f"\n=== Training StackRNN ===")
-    
-    key = jax.random.PRNGKey(42)
-    dummy_input = jnp.zeros((1, 2 * TRAINING_SEQ_LEN + 2), dtype=jnp.int32)
-    state = create_train_state(model, key, LEARNING_RATE, dummy_input)
-
-    print(state.params.keys())
-
-
-    #Train Loop
-    losses = []
-    accs = []
-    for step in range(STEPS + 1):
-        rand_max_len = np.random.randint(10, TRAINING_SEQ_LEN + 1)
-        batch = generate_rev_trace(BATCH_SIZE, rand_max_len)
-        state, loss, acc = train_step(state, batch)
-        losses.append(loss)
-        accs.append(acc)
-        if step % 500 == 0:
-            print(f"Step {step} | Train Loss: {loss:.4f} | Train Acc: {acc:.2%}")
-
-    plt.figure(figsize=(10, 6))
-    plt.plot(losses)
-    plt.title("Training Loss Curve")
-    plt.xlabel("Step")
-    plt.ylabel("Loss")
-    plt.savefig("training_loss_curve.png")
-
-    plt.figure(figsize=(10, 6))
-    plt.plot(accs)
-    plt.title("Training Accuracy Curve")
-    plt.xlabel("Step")
-    plt.ylabel("Accuracy")
-    plt.savefig("training_accuracy_curve.png")
-
-
-
-    
-    #evaluate OOD
-    print(f"--- Evaluating OOD for StackRNN ---")
-    seq_accuracies = []
-    token_accuracies = []
     
     for L in TEST_LENGTHS:
-        prompts = generate_fixed_batch(N_EVAL_SAMPLES, L)
+        # Fewer samples for very long sequences
+        N_SAMPLES = 100 if L <= 100 else 50
+        prompts = generate_fixed_batch(N_SAMPLES, L)
         correct_predictions = 0
-        
         token_accuracies_l = []
-        for i in range(N_EVAL_SAMPLES):
+        confidences_l = []
+        
+        for i in range(N_SAMPLES):
             prompt = prompts[i:i+1, :]
             prompt_bits = prompt[0, :L]
-
-
-            #print(prompt)
-            generated = evaluate(state, jnp.array(prompt_bits[None, :]), max_len=L+5)
-            #generated2 = evaluate_recursive(state, prompt, max_len=L+5)
+            # hard_actions=False
+            generated, conf = evaluate(state, jnp.array(prompt_bits[None, :]), max_len=L+10, hard_actions=False)
             
-
             generated_output = generated
-            #generated_output2 = generated2[0]
-            
-            # Create ground truth output
             ground_truth = np.asarray(prompt_bits[::-1])
             ground_truth = np.concatenate([ground_truth, [VOCAB_EOS]])
             
-
             is_correct = False
             if len(generated_output) >= len(ground_truth):
                 if np.array_equal(generated_output[:len(ground_truth)], ground_truth):
                     if len(generated_output) == len(ground_truth) or generated_output[len(ground_truth)] == VOCAB_EOS:
                         is_correct = True
-
             if is_correct:
                 correct_predictions += 1
             
-            #print(generated_output, ground_truth)
-
-            # only check till the length of the ground truth for token accuracy
+            # Pad/Clip for token accuracy calculation
             if len(generated_output) > len(ground_truth):
                 generated_output = generated_output[:len(ground_truth)]
             elif len(generated_output) < len(ground_truth):
-                # Pad with EOS if generated output is shorter than ground truth
                 generated_output = np.concatenate([generated_output, [VOCAB_EOS] * (len(ground_truth) - len(generated_output))])
-
+            
             token_accuracy = (generated_output == ground_truth).mean()
             token_accuracies_l.append(token_accuracy)
+            confidences_l.append(conf)
                 
-        seq_acc = correct_predictions / N_EVAL_SAMPLES
+        seq_acc = correct_predictions / N_SAMPLES
         token_acc = np.mean(token_accuracies_l)
-        seq_accuracies.append(seq_acc)
-        token_accuracies.append(token_acc)
-        print(f"Len {L}: Seq Acc: {seq_acc:.2%} | Token Acc: {token_acc:.2%}")
-        
-    final_results["StackRNN"] = (seq_accuracies, token_accuracies)
+        avg_conf = np.mean(confidences_l)
+        print(f"Len {L}: Seq Acc: {seq_acc:.2%} | Confidence (MaxProb): {avg_conf:.4f}")
+        final_results[L] = (seq_acc, token_acc, avg_conf)
 
-    # --- Plotting ---
+    # 3. Plotting results for this milestone
     plt.figure(figsize=(10, 6))
     sns.set_style("whitegrid")
-    plt.plot(TEST_LENGTHS, final_results["StackRNN"][0], marker='o')
-    plt.plot(TEST_LENGTHS, final_results["StackRNN"][1], marker='x', label="Token Accuracy")
+    lengths = sorted(final_results.keys())
+    seq_accs = [final_results[l][0] for l in lengths]
+    tok_accs = [final_results[l][1] for l in lengths]
+    plt.plot(lengths, seq_accs, marker='o', label="Sequence Accuracy")
+    plt.plot(lengths, tok_accs, marker='x', label="Token Accuracy")
     plt.axvline(x=60, color='gray', linestyle='--', label="Max Train Length (60)")
-    plt.title("OOD Generalization: Accuracy vs. String Length", fontsize=14)
+    plt.title(f"OOD Generalization (Step {milestone_step}, Soft Stack)", fontsize=14)
     plt.xlabel("String Length (Bits)", fontsize=12)
-    plt.ylabel("Sequence Accuracy (Exact Match)", fontsize=12)
+    plt.ylabel("Accuracy", fontsize=12)
     plt.ylim(-0.05, 1.05)
-    plt.xticks(TEST_LENGTHS)
     plt.legend()
     plt.tight_layout()
-    plt.show()
-    plt.savefig("ood_generalization_plot.png")
+    plt.savefig(os.path.join(output_dir, "ood_generalization_plot.png"))
+    plt.close()
+    
+    return final_results
+
+if __name__ == "__main__":
+    model = StackRNN(use_one_hot_emb=False)
+    
+    print(f"\n=== Starting Confidence Study (Soft Stack Inference, Milestones 6k, 8k, 10k) ===")
+    
+    # Use a fixed key
+    key = jax.random.PRNGKey(42)
+    dummy_input = jnp.zeros((1, 2 * SEQ_LENGTH + 2), dtype=jnp.int32)
+    state = create_train_state(model, key, LEARNING_RATE, dummy_input)
+
+    MILESTONES = [6000, 8000, 10000]
+    all_milestone_results = {}
+
+    losses = []
+    accs = []
+    for step in range(STEPS + 1):
+        rand_max_len = np.random.randint(10, SEQ_LENGTH + 1)
+        batch = generate_rev_trace(BATCH_SIZE, rand_max_len)
+        state, loss, acc = train_step(state, batch)
+        losses.append(loss)
+        accs.append(acc)
+        
+        if step % 500 == 0:
+            print(f"Step {step} | Train Loss: {loss:.4f} | Train Acc: {acc:.2%}")
+
+        if step in MILESTONES:
+            all_milestone_results[step] = run_full_evaluation(state, step)
+
+    # Save training curves
+    plt.figure(figsize=(10, 6))
+    plt.plot(losses)
+    plt.title("Full Training Loss Curve")
+    plt.savefig(os.path.join(BASE_OUTPUT_DIR, "training_loss_curve.png"))
+    plt.close()
+
+    plt.figure(figsize=(10, 6))
+    plt.plot(accs)
+    plt.title("Full Training Accuracy Curve")
+    plt.savefig(os.path.join(BASE_OUTPUT_DIR, "training_accuracy_curve.png"))
+    plt.close()
+    
+    # Final Summary Plot
+    plt.figure(figsize=(10, 6))
+    l300_accs = [all_milestone_results[s][300][0] for s in MILESTONES]
+    l300_conf = [all_milestone_results[s][300][2] for s in MILESTONES]
+    
+    fig, ax1 = plt.subplots(figsize=(10, 6))
+    ax2 = ax1.twinx()
+    ax1.plot(MILESTONES, l300_accs, marker='s', color='blue', label="Seq Acc (L=300)")
+    ax2.plot(MILESTONES, l300_conf, marker='^', color='red', label="Avg Confidence (L=300)")
+    ax1.set_xlabel("Training Step")
+    ax1.set_ylabel("Sequence Accuracy", color='blue')
+    ax2.set_ylabel("Max Prob Confidence (Action)", color='red')
+    plt.title("Effect of Training Steps on Soft-Stack OOD (L=300)")
+    plt.savefig(os.path.join(BASE_OUTPUT_DIR, "confidence_study_summary.png"))
+    plt.close()

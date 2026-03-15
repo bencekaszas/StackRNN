@@ -9,6 +9,7 @@ MAX_LEN = 2 * TEST_SEQ_LENGTH + 2
 class StackRNNCell(nn.Module):
     """single step of the auto-regressive StackRNN."""
     stack_depth: int = STACK_DEPTH
+    hard_actions: bool = False
     
     @nn.compact
     def __call__(self, carry, x_emb):
@@ -16,7 +17,7 @@ class StackRNNCell(nn.Module):
         
         stack_top = stack[:, 0]
         
-        #state_emb = jax.nn.one_hot(state_prev, NUM_STATES)
+        # state_emb = jax.nn.one_hot(state_prev, NUM_STATES)
         state_emb = nn.Dense(HIDDEN_DIM, name="state_embed")(state_prev)
         stack_top_emb = nn.Dense(HIDDEN_DIM, name="stack_top_embed")(stack_top)         
         flat_input = jnp.concatenate([x_emb, state_emb, stack_top_emb], axis=-1)
@@ -27,37 +28,53 @@ class StackRNNCell(nn.Module):
         
         action_probs = nn.softmax(logits_mem)
         
+        if self.hard_actions:
+            # Discrete actions at inference time
+            max_act = jnp.argmax(action_probs, axis=-1)
+            action_probs = jax.nn.one_hot(max_act, NUM_MEM_ACTIONS)
+        
         stack_new, _ = jax.vmap(soft_update_stack)(stack, action_probs)
 
         next_state = nn.softmax(logits_state, axis=-1)
         new_carry = (stack_new, next_state)
-        return new_carry, logits_buf
+        return new_carry, (logits_buf, action_probs)
 
 class StackRNN(nn.Module):
     """An auto-regressive StackRNN model."""
     cell_cls = StackRNNCell
+    use_one_hot_emb: bool = False
     
     @nn.compact
     def embed(self, x):
         """A separate method for embedding the input."""
-        x_emb = nn.Embed(VOCAB_SIZE, HIDDEN_DIM, name="input_embed")(x)
-        return x_emb
+        if self.use_one_hot_emb:
+            # Fixed one-hot encoding (Identity matrix)
+            return jax.nn.one_hot(x, VOCAB_SIZE)
+        else:
+            # Learned embedding
+            x_emb = nn.Embed(VOCAB_SIZE, HIDDEN_DIM, name="input_embed")(x)
+            return x_emb
 
     @nn.compact
-    def __call__(self, x):
+    def __call__(self, x, hard_actions=False):
         batch_size, seq_len = x.shape
-        x_with_pos = self.embed(x)
+        x_emb = self.embed(x)
         
+        # If one-hot, we need to map the sparse vector back to HIDDEN_DIM 
+        # for consistency in the cell logic.
+        if self.use_one_hot_emb:
+            x_emb = nn.Dense(HIDDEN_DIM, name="input_proj")(x_emb)
+
         # Init Carry
         init_stack = jnp.zeros((batch_size, STACK_DEPTH, STACK_VOCAB_SIZE))
         init_stack = init_stack.at[:, :, STACK_NULL].set(1.0)
-        init_state = jnp.zeros((batch_size,NUM_STATES), dtype=jnp.float32)
+        init_state = jnp.zeros((batch_size, NUM_STATES), dtype=jnp.float32)
         carry = (init_stack, init_state)
         
         scan_layer = nn.scan(self.cell_cls, variable_broadcast="params", 
                              split_rngs={"params": False}, in_axes=1, out_axes=1)
         
-        final_carry, logits_buf = scan_layer()(carry, x_with_pos)
+        final_carry, (logits_buf, _) = scan_layer(hard_actions=hard_actions)(carry, x_emb)
         
         return logits_buf, final_carry
 
@@ -266,3 +283,15 @@ class Transformer_old(nn.Module):
         dummy_logits = jnp.zeros((batch_size, seq_len, 1))
         
         return dummy_logits, logits_buf, dummy_logits
+    
+
+
+
+
+    # state visualisation / output buffer vis - do erros occur because of writing the wrong thing, being in the wrong state, data fidelity
+    # vary state size - does length gen decay with number of states
+   # visualise / check if blurring deep in stack 
+   # training for longer vs. switching to hard stack at inference time - better generalisation? 
+   # Try one hot embedding istead of learned embedding - does it help with generalisation?
+
+
