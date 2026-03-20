@@ -1,0 +1,36 @@
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+
+\begin{document}
+
+\section{Proof of Blurring in Soft Stacks}
+
+\textbf{Goal:} To prove that as stack operations are repeatedly applied, the distribution of elements stored in the stack becomes increasingly high-entropy, thereby losing deterministic fidelity.
+
+\subsection*{Definitions and Notation}
+Let $t \in \mathbb{N}$ represent the current discrete time step, and $K \in \mathbb{N}$ denote the finite maximum depth of the stack. The total number of distinct stack symbols is given by $\Gamma \in \mathbb{N}$, where the specific symbol $\Gamma$ designates the empty stack symbol, which cannot be pushed. We use $e_j$ to represent a standard one-hot basis vector; for instance, $e_\gamma$ is the one-hot embedding of stack symbol $\gamma$, and $e_\Gamma$ represents the empty stack symbol. The standard probability simplex over $N$ elements is denoted by $\Delta([N])$. The controller's output vector representing the probability distribution over memory actions at time $t$ is $a(t) \in \Delta([\Gamma+1])$. From this, $a_{push}(t) = \sum_{\gamma=1}^{\Gamma-1} a_\gamma(t)$ is the total probability of pushing any non-empty symbol, $a_{pop}(t) = a_\Gamma(t)$ is the probability of a pop operation, and $a_{noop}(t) = a_{\Gamma+1}(t)$ is the probability of a no-operation. Finally, the matrix representing the entire stack at time $t$ is $M(t) \in \mathbb{R}^{K \times \Gamma}$, with its $k$-th row, $m_k(t) \in \Delta([\Gamma])$, representing the probability mass function of the symbol stored at the $k$-th stack position.
+
+\subsection{Stack elements and initial state}
+When an element is pushed onto the stack, it enters as a probability distribution over the non-empty symbols: $s(t) = \sum_{\gamma=1}^{\Gamma-1} a_\gamma(t)e_\gamma$. Let us track the distribution of a specific element residing at depth $k$, denoted by $m_k(t)$.
+
+\subsection{Sequence of stack operations}
+During each time step, the stack's state is recursively updated using the affine linear dynamical system $M(t+1) = A(t)M(t) + B(t)$. The transition matrix is defined as $A(t) = a_{noop}(t)I + a_{push}(t)D + a_{pop}(t)U$, where $I$ is the $K \times K$ identity matrix, and $D, U \in \{0,1\}^{K \times K}$ are the downshift and upshift nilpotent operators, respectively. The term $B(t) = e_1s(t)^T + a_{pop}(t)e_K e_\Gamma^T$ represents the boundary injection terms for pushing a new distribution to the top ($e_1$) and pulling the empty symbol from the bottom ($e_K$).
+
+Unrolling this recursion over a sequence of operations yields:
+\begin{equation*}
+M(t) = \left(\prod_{s=1}^{t-1}A(s)\right)M(1) + \sum_{s=1}^{t-1}\left(\prod_{u=s+1}^{t-1}A(u)\right)B(s)
+\end{equation*}
+This demonstrates that the state of our tracked element at any future time is governed by the sequential product of the transition matrices $A(u)$.
+
+\subsection{Blurring}
+We can observe how the distribution of our element blurs by examining the row-wise update rule for the interior of the stack, where $k \in [2, K-1]$:
+\begin{equation*}
+m_k(t+1) = a_{push}(t)m_{k-1}(t) + a_{noop}(t)m_k(t) + a_{pop}(t)m_{k+1}(t)
+\end{equation*}
+
+The matrix $A(t)$ acts as a stable transport operator over the stack depth, formed by a convex combination of partial shift operators. Because the action weights $a_{push}(t)$, $a_{noop}(t)$, and $a_{pop}(t)$ are derived from a softmax distribution, they effectively apply fractional shifts. Applying this convex combination recursively causes a discrete-time diffusion. The distinct probability mass of the original element $m_k(t)$ becomes blended with the probability distributions from the adjacent slots $m_{k-1}(t)$ and $m_{k+1}(t)$. Furthermore, as operations continue, pop actions inevitably draw the empty stack symbol $e_\Gamma$ up from the truncated bottom boundary of the stack ($k=K$). 
+
+Therefore, if the element remains in the soft stack over an extended time horizon, its initial probability distribution will continuously average with neighboring pushes and the empty symbol $e_\Gamma$. This diffusion monotonically increases the entropy of the probability mass function $m_k(t)$, transitioning it away from a deterministic (one-hot) state toward a high-entropy mixture. This fundamentally limits the ability of the gradient-based in-context learner to reliably recover older context over long sequences.
+
+\end{document}
