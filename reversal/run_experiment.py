@@ -17,7 +17,7 @@ from models import StackRNN
 from constants import ACT_PUSH_0, ACT_PUSH_1, ACT_POP, STACK_NULL
 from visualize import evaluate_and_visualize, plot_deepmind_style, plot_state_trajectory, plot_final_stack_distribution, plot_read_fidelity
 
-OUTPUT_DIR = "results/baseline_64D_state_unnormalised"
+OUTPUT_DIR = "/results/reversal/baseline_64D_state"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 def create_train_state(model, key, learning_rate, dummy_input):

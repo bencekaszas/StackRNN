@@ -29,8 +29,9 @@ We can observe how the distribution of our element blurs by examining the row-wi
 m_k(t+1) = a_{push}(t)m_{k-1}(t) + a_{noop}(t)m_k(t) + a_{pop}(t)m_{k+1}(t)
 \end{equation*}
 
-The matrix $A(t)$ acts as a stable transport operator over the stack depth, formed by a convex combination of partial shift operators. Because the action weights $a_{push}(t)$, $a_{noop}(t)$, and $a_{pop}(t)$ are derived from a softmax distribution, they effectively apply fractional shifts. Applying this convex combination recursively causes a discrete-time diffusion. The distinct probability mass of the original element $m_k(t)$ becomes blended with the probability distributions from the adjacent slots $m_{k-1}(t)$ and $m_{k+1}(t)$. Furthermore, as operations continue, pop actions inevitably draw the empty stack symbol $e_\Gamma$ up from the truncated bottom boundary of the stack ($k=K$). 
+As the action weights $a_{push}(t)$, $a_{noop}(t)$, and $a_{pop}(t)$ are derived from a softmax distribution, they effectively apply fractional shifts. Applying this convex combination recursively causes a discrete-time diffusion. The distinct probability mass of the original element $m_k(t)$ becomes blended with the probability distributions from the adjacent slots $m_{k-1}(t)$ and $m_{k+1}(t)$. Furthermore, as operations continue, pop actions inevitably draw the empty stack symbol $e_\Gamma$ up from the truncated bottom boundary of the stack ($k=K$). 
 
-Therefore, if the element remains in the soft stack over an extended time horizon, its initial probability distribution will continuously average with neighboring pushes and the empty symbol $e_\Gamma$. This diffusion monotonically increases the entropy of the probability mass function $m_k(t)$, transitioning it away from a deterministic (one-hot) state toward a high-entropy mixture. This fundamentally limits the ability of the gradient-based in-context learner to reliably recover older context over long sequences.
+Therefore, if the element remains in the soft stack over an extended amount of time, its initial probability distribution will continuously average with neighboring pushes and the empty symbol $e_\Gamma$. This diffusion monotonically increases the entropy of the probability mass function $m_k(t)$, transitioning it away from a deterministic (one-hot) state toward a high-entropy mixture. 
+
 
 \end{document}

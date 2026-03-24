@@ -3,8 +3,8 @@ import jax.numpy as jnp
 from flax import linen as nn
 import matplotlib.pyplot as plt
 import numpy as np
-from dyck_constants import *
-from dyck_models import DyckStackRNN, DyckStackRNNCell
+from constants import *
+from models import DyckStackRNN, DyckStackRNNCell
 
 def evaluate_and_visualize_dyck(state, prompt, max_len=100, hard_actions=False):
     """
@@ -85,6 +85,7 @@ def plot_dyck_stack_viz(full_sequence, stack_history, action_history, file_path)
     ax1.set_title('Probability of stack action, per input token', fontsize=16)
     ax1.legend(loc='upper right')
     ax1.set_xlim(-0.5, num_actions - 0.5)
+    ax1.grid(False)
 
     # Stack Contents (Probability of OPEN)
     # Aligning stack_history[t] with the token processed at time t
@@ -102,14 +103,10 @@ def plot_dyck_stack_viz(full_sequence, stack_history, action_history, file_path)
     stack_cropped = stack_probs[:crop_depth, :]
     
     # Plot heatmap
-    # Using origin='lower' so depth 0 is at the "bottom" relative to higher indices
-    # But wait, in our soft stack, index 0 is the TOP.
-    # To make it grow UPWARDS, index 0 (top) should be at the top of the colored area.
-    # If we use origin='lower', index 0 is at the bottom. PUSHing shifts 0->1, 1->2.
-    # So the element at 0 moves UP to 1. This looks like growing!
     im = ax2.imshow(stack_cropped, aspect='auto', cmap='viridis', interpolation='nearest', origin='lower')
     ax2.set_title('Stack evolution (P(Open))', fontsize=16)
     ax2.set_ylabel('Stack Depth')
+    ax2.grid(False)
     
     # Add tokens above the heatmap
     token_labels = []

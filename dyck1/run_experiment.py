@@ -7,13 +7,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 import os
 
-from dyck_constants import *
-from dyck_data_gen import generate_dyck_batch, generate_fixed_batch, generate_dyck_string
-from dyck_models import DyckStackRNN, DyckStackRNNCell
-from dyck_visualize import (evaluate_and_visualize_dyck, plot_dyck_stack_viz, 
+from constants import *
+from data_gen import generate_dyck_batch, generate_fixed_batch, generate_dyck_string
+from models import DyckStackRNN, DyckStackRNNCell
+from visualize import (evaluate_and_visualize_dyck, plot_dyck_stack_viz, 
                             plot_dyck_state_trajectory, plot_dyck_ood_generalization)
 
-OUTPUT_DIR = "results/dyck1_8D_state"
+OUTPUT_DIR = "/results/dyck1/8D_state_3"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 def create_train_state(model, key, learning_rate, dummy_input):
@@ -122,16 +122,21 @@ if __name__ == "__main__":
         if step % 500 == 0:
             print(f"Step {step} | Loss: {loss:.4f} | Acc: {acc:.2%}")
 
-    # Plot Training Curves
-    plt.figure(figsize=(10, 5))
-    plt.subplot(1, 2, 1)
+    plt.figure(figsize=(10, 6))
     plt.plot(losses)
-    plt.title("Training Loss")
-    plt.subplot(1, 2, 2)
+    plt.title("Training Loss Curve")
+    plt.xlabel("Step")
+    plt.ylabel("Loss")
+    plt.savefig(os.path.join(OUTPUT_DIR, "training_loss_curve.png"))
+
+    plt.figure(figsize=(10, 6))
     plt.plot(accuracies)
-    plt.title("Training Accuracy")
-    plt.savefig(os.path.join(OUTPUT_DIR, "training_curves.png"))
-    plt.close()
+    plt.title("Training Accuracy Curve")
+    plt.xlabel("Step")
+    plt.ylabel("Accuracy")
+    plt.savefig(os.path.join(OUTPUT_DIR, "training_accuracy_curve.png"))
+
+
 
     TEST_LENGTHS = [20, 40, 60, 100, 200, 300, 400, 500]
     

@@ -1,6 +1,6 @@
 import numpy as np
 import jax.numpy as jnp
-from dyck_constants import *
+from constants import *
 
 def generate_dyck_string(max_depth, length):
     """
@@ -16,11 +16,9 @@ def generate_dyck_string(max_depth, length):
             prefix.append(DYCK_OPEN)
             current_depth += 1
         elif current_depth >= max_depth:
-            # If we hit max depth, we MUST close
             prefix.append(DYCK_CLOSE)
             current_depth -= 1
         else:
-            # Randomly choose
             if np.random.rand() > 0.5:
                 prefix.append(DYCK_OPEN)
                 current_depth += 1
@@ -28,7 +26,6 @@ def generate_dyck_string(max_depth, length):
                 prefix.append(DYCK_CLOSE)
                 current_depth -= 1
                 
-    # Suffix to balance
     suffix = [DYCK_CLOSE] * current_depth
     return prefix, suffix
 

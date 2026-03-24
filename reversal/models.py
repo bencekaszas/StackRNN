@@ -2,6 +2,9 @@ import jax
 import jax.numpy as jnp
 from flax import linen as nn
 from constants import *
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from stack_utils import soft_update_stack
 
 class StackRNNCell(nn.Module):
