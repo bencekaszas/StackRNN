@@ -4,6 +4,7 @@
 
 \newtheorem{lemma}{Lemma}
 \newtheorem{proposition}{Proposition}
+\newcommand{\bm}{\mathbf}
 
 \begin{document}
 
@@ -11,66 +12,68 @@
 
 \subsection*{Notation and Setup}
 
-We consider an auto-regressive StackRNN processing a sequence reversal task. Let $\Sigma$ denote the input and output buffer alphabet of size $|\Sigma| = 5$, representing the symbols $\{\text{PAD}, 0, 1, \text{EQ}, \text{EOS}\}$. Let $\Gamma$ denote the stack alphabet of size $|\Gamma| = 3$, representing $\{\text{NULL}, 0, 1\}$. We define the controller state space $Q$ such that $|Q| = 2$, representing the latent algorithmic phases $\{\text{READ}, \text{WRITE}\}$. 
+We consider an auto-regressive StackRNN processing a sequence reversal task. Let $\Sigma$ denote the input and output buffer alphabet of size $|\Sigma| = 5$, representing the symbols $\{\text{PAD}, 0, 1, \text{EQ}, \text{EOS}\}$. Let $\Gamma$ denote the stack alphabet of size $|\Gamma| = 3$, representing $\{\text{NULL}, 0, 1\}$. We define the controller state space $Q$ such that $|Q| = 2$, representing the algorithmic phases $\{\text{READ}, \text{WRITE}\}$. 
 
-At each time step $t \in \mathbb{N}$, the controller receives a concatenated input vector $z(t) \in \mathbb{R}^{10}$, structured as:
+At each time step $t \in \mathbb{N}$, the controller receives a concatenated input vector $\bm{z}_t \in \mathbb{R}^{10}$, structured as:
 \begin{equation}
-z(t) = \begin{bmatrix} r(t) \\ x(t) \\ q(t-1) \end{bmatrix}
+\bm{z}_t = \begin{bmatrix} \bm{r}_t \\ \bm{x}_t \\ \bm{q}_{t-1} \end{bmatrix}
 \end{equation}
 where:
 \begin{itemize}
-    \item $r(t) = m_1(t) \in \Delta^2$ is the distribution over the top of the stack.
-    \item $x(t) \in \{0, 1\}^5$ is the one-hot encoding of the current input token.
-    \item $q(t-1) \in \Delta^1$ is the controller's state distribution from the previous time step.
+    \item $\bm{r}_t \in \Delta^2$ is the distribution over the top of the stack
+    \item $\bm{x}_t \in \{0, 1\}^5$ is the one-hot encoding of the current input token
+    \item $\bm{q}_{t-1} \in \Delta^1$ is the controller's state distribution from the previous time step
 \end{itemize}
 
-The exact basis of $z(t)$ is ordered as follows:
+The exact basis of $\bm{z}_t$ is ordered as follows:
 \begin{equation}
 (r_{\text{NULL}}, r_0, r_1, \; x_{\text{PAD}}, x_0, x_1, x_{\text{EQ}}, x_{\text{EOS}}, \; q_{\text{READ}}, q_{\text{WRITE}})
 \end{equation}
 
 The model updates are parameterized by affine transformations mapped through a Softmax function:
 \begin{align}
-    q(t) &= \text{Softmax}(W^{(q)} z(t)) \\
-    a(t) &= \text{Softmax}(W^{(a)} z(t)) \\
-    b(t) &= \text{Softmax}(W^{(b)} z(t))
+    \bm{q}_t &= \text{Softmax}(W_q \bm{z}_t) \\
+    \bm{a}_t &= \text{Softmax}(W_a \bm{z}_t) \\
+    \bm{b}_t &= \text{Softmax}(W_b \bm{z}_t)
 \end{align}
-where $a(t)$ maps to the memory actions $\{\text{NOOP}, \text{PUSH\_0}, \text{PUSH\_1}, \text{POP}\}$ and $b(t)$ maps to the buffer emission vocabulary $\Sigma$. We introduce a scalar $\omega \in \mathbb{R}^+$ representing the $L_2$-norm of the learned weight matrices. To prove the existence of an exact solution, we construct a specific parameterization where all weight matrices share a uniform global scaling factor $\omega$. Taking the limit as $\omega \to \infty$ pushes the Softmax decision boundaries into discrete step functions.
+where $\bm{a}_t$ maps to the memory actions $\{\text{NOOP}, \text{PUSH\_0}, \text{PUSH\_1}, \text{POP}\}$ and $\bm{b}_t$ maps to the buffer emission vocabulary $\Sigma$. We introduce a scalar $\omega \in \mathbb{R}^+$ representing the $L_2$-norm of the learned weight matrices. To prove the existence of an exact solution, we construct a specific parameterization where all weight matrices share a uniform global scaling factor $\omega$. Taking the limit as $\omega \to \infty$ pushes the Softmax decision boundaries into discrete step functions.
 
 
-\begin{lemma}[Existence of Scale-Invariant Parameterizations in StackRNNs]
-For the synchronous sequence reversal task, there exists a set of weight matrices $\{W^{(q)}, W^{(a)}, W^{(b)}\}$ for the auto-regressive StackRNN architecture such that, in the limit as $\omega \to \infty$, the model exactly recovers the scale-invariant Pushdown Transducer algorithm. Consequently, the model achieves zero token-wise error for any arbitrary sequence length $L \le K$, where $K$ is the finite stack depth.
+\begin{lemma}
+For the auto-regressive sequence reversal task, there exists a set of weight matrices $\{W_q, W_a, W_b\}$ for the auto-regressive StackRNN architecture such that, in the limit as $\omega \to \infty$, the model exactly recovers the scale-invariant binary string reversal algorithm. Consequently, the model achieves zero token-wise error for any arbitrary sequence length $L \le K$, where $K$ is the finite stack depth.
 \end{lemma}
 
 \begin{proof}
-We construct the weight matrices to analytically partition the simplices $\Delta^2$ and $\Delta^1$ into the strict logical control flow of the reversal algorithm. We set all unspecified matrix elements to strictly zero.
+We construct the matrices to map the inputs strictly to the deterministic logic of the string reversal algorithm. We set all
+unspecified matrix elements to strictly zero.
 
-\paragraph{1. The State Transition Matrix ($W^{(q)} \in \mathbb{R}^{2 \times 10}$)}
-This matrix defines the recurrence $\hat{q}(t)$, transitioning the controller from $\text{READ}$ (Row 1) to $\text{WRITE}$ (Row 2) when the $\text{EQ}$ token ($x_{\text{EQ}}$) is read.
+\paragraph{ State Transition Matrix ($W_q \in \mathbb{R}^{2 \times 10}$)}
+This matrix defines the transition of the controller from  the $\text{READ}$ phase (Row 1) to the $\text{WRITE}$ phase (Row 2) when the $\text{EQ}$ token ($x_{\text{EQ}}$) is read.
 \begin{equation}
-W^{(q)} = \omega \begin{bmatrix}
+W_q = \omega \begin{bmatrix}
 0 & 0 & 0 & 0 & 0 & 0 & -2 & 0 & 1 & 0 \\
 0 & 0 & 0 & 0 & 0 & 0 & 2 & 0 & 0 & 1
 \end{bmatrix}
 \end{equation}
 As $\omega \to \infty$, the Softmax acts as a perfect discontinuous step function. When $x_{\text{EQ}} = 1$, the logits shift, locking the controller into the $\text{WRITE}$ phase indefinitely.
 
-\paragraph{2. The Memory Action Matrix ($W^{(a)} \in \mathbb{R}^{4 \times 10}$)}
-This matrix maps inputs to the stack actions $[\text{NOOP}, \text{PUSH\_0}, \text{PUSH\_1}, \text{POP}]^T$.
+\paragraph{Memory Action Matrix ($W_a \in \mathbb{R}^{4 \times 10}$)}
+This matrix maps inputs to the stack actions \\ $\{\text{NOOP}, \text{PUSH\_0}, \text{PUSH\_1}, \text{POP}\}$.
+
 \begin{equation}
-W^{(a)} = \omega \begin{bmatrix}
+W_a = \omega \begin{bmatrix}
 1 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 2 \\
 0 & 0 & 0 & 0 & 2 & 0 & 0 & 0 & 2 & 0 \\
 0 & 0 & 0 & 0 & 0 & 2 & 0 & 0 & 2 & 0 \\
 0 & 1 & 1 & 0 & 0 & 0 & 4 & 0 & 0 & 2
 \end{bmatrix}
 \end{equation}
-During the $\text{READ}$ phase ($q_{\text{READ}} \approx 1$), rows 2 and 3 activate upon reading data bits, emitting $\text{PUSH}$. Upon reading $\text{EQ}$, row 4 is driven to $4\omega$, forcing an initial $\text{POP}$. During the $\text{WRITE}$ phase ($q_{\text{WRITE}} \approx 1$), setting the $\text{NOOP}$ and $\text{POP}$ logits equal defines the boundary: $2\omega + \omega r_{\text{NULL}} = 2\omega + \omega(r_0 + r_1)$. Because $r(t) \in \Delta^2$, this simplifies to $r_{\text{NULL}} = 0.5$. The model correctly issues a continuous $\text{POP}$ command until the stack's $\text{NULL}$ token captures the majority probability mass.
+During the $\text{READ}$ phase ($q_{\text{READ}} \approx 1$), rows 2 and 3 are active when reading data bits, emitting $\text{PUSH}$. If $\text{EQ}$ is read, row 4 is driven to $4\omega$, forcing an initial $\text{POP}$. During the $\text{WRITE}$ phase ($q_{\text{WRITE}} \approx 1$), setting the $\text{NOOP}$ and $\text{POP}$ logits equal defines the boundary: $2\omega + \omega r_{\text{NULL}} = 2\omega + \omega(r_0 + r_1)$. Because $\bm{r}_t \in \Delta^2$ and so $r_{\text{NULL}} + r_0 + r_1 = 1$, this simplifies to $r_{\text{NULL}} = 0.5$. The model correctly issues a continuous $\text{POP}$ command until the stack's $\text{NULL}$ token captures the majority probability mass.
 
-\paragraph{3. The Buffer Output Matrix ($W^{(b)} \in \mathbb{R}^{5 \times 10}$)}
-This matrix maps to the output vocabulary $[\text{PAD}, 0, 1, \text{EQ}, \text{EOS}]^T$.
+\paragraph{Buffer Output Matrix ($W_b \in \mathbb{R}^{5 \times 10}$)}
+This matrix maps to the output vocabulary \\$\{\text{PAD}, 0, 1, \text{EQ}, \text{EOS}\}$.
 \begin{equation}
-W^{(b)} = \omega \begin{bmatrix}
+W_b = \omega \begin{bmatrix}
 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 3 & 0 \\
 0 & 2 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 1 \\
 0 & 0 & 2 & 0 & 0 & 0 & 0 & 0 & 0 & 1 \\
@@ -78,7 +81,7 @@ W^{(b)} = \omega \begin{bmatrix}
 2 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 1
 \end{bmatrix}
 \end{equation}
-During the $\text{READ}$ phase, row 1 guarantees the emission of the $\text{PAD}$ token. During the $\text{WRITE}$ phase, the distribution $r(t)$ directly drives rows 2, 3, and 5. The matrix perfectly projects the argmax of the stack's distribution to the output buffer, emitting $\text{EOS}$ precisely when $r_{\text{NULL}} > 0.5$. 
+During the $\text{READ}$ phase, row 1 guarantees the emission of the $\text{PAD}$ token. During the $\text{WRITE}$ phase, the distribution $\bm{r}_t$ directly drives rows 2, 3, and 5. The matrix perfectly projects the argmax of the stack's distribution to the output buffer, emitting $\text{EOS}$ precisely when $r_{\text{NULL}} > 0.5$. 
 \end{proof}
 
 
@@ -86,22 +89,77 @@ During the $\text{READ}$ phase, row 1 guarantees the emission of the $\text{PAD}
 \section{Bracket Balancing Task}
 
 
-\section{Memory Leakage via Soft Action Diffusion}
+We consider the auto-regressive \texttt{DyckStackRNN} processing the Dyck-1 bracket completion task. Let $\Sigma$ denote the input and output buffer alphabet of size $|\Sigma| = 5$, representing the symbols $\{\text{PAD}, \text{OPEN}, \text{CLOSE}, \text{EQ}, \text{EOS}\}$. Let $\Gamma$ denote the stack alphabet of size $|\Gamma| = 2$, representing $\{\text{NULL}, \text{OPEN}\}$. We define the controller state space $Q$ such that $|Q| = 2$, representing the algorithmic phases $\{\text{READ}, \text{WRITE}\}$.
 
-Recall that during training, the soft stack implementation recursively updates the stack matrix $M(t)$ using the expected distribution over symbols with respect to the continuous action probabilities. We can express the unrolled evolution of the stack away from the boundary injection terms using the transition matrix $A(t)$:
+At each time step $t \in \mathbb{N}$, similarly to the reversal task we pass a concatenated vector $\bm{z}_t \in \mathbb{R}^9$ to the controlller, with its basis structured as:
 \begin{equation}
-A(t) = a_{\text{noop}}(t)I + a_{\text{push}}(t)D + a_{\text{pop}}(t)U
+(r_{\text{NULL}}, r_{\text{OPEN}}, \; x_{\text{PAD}}, x_{\text{OPEN}}, x_{\text{CLOSE}}, x_{\text{EQ}}, x_{\text{EOS}}, \; q_{\text{READ}}, q_{\text{WRITE}})
 \end{equation}
-where $D, U \in \{0,1\}^{K \times K}$ are the downshift and upshift nilpotent operators.
+where $\bm{r}_t \in \Delta^1$ is the stack top distribution, $\bm{x}_t \in \{0, 1\}^5$ is the current input token, and $\bm{q}_{t-1} \in \Delta^1$ is the state distribution. The memory actions map to $\{\text{NOOP}, \text{PUSH}, \text{POP}\}$, where $\text{PUSH}$ pushes the $\text{OPEN}$ bracket.
 
-\begin{proposition}[Memory Leakage via Soft Action Diffusion]
-Assume the learned memory policy during a homogeneous phase of the algorithm (e.g., the $\text{POP}$ sequence during the $\text{WRITE}$ phase) produces a constant sub-optimal action distribution $a \in \Delta^3$ strictly inside the simplex. Specifically, let the intended action have probability $1-\epsilon$ and the remaining probability mass $\epsilon > 0$ be distributed among the unintended actions, where $\epsilon = \alpha + \beta$. 
+\begin{lemma}
+For the auto-regressive Dyck-1 bracket balancing task, there exists a set of weight matrices $\{W_q, W_a, W_b\}$ for the StackRNN architecture such that, in the limit as $\omega \to \infty$, the model exactly recovers the bracket balancing algorithm. Consequently, the model achieves zero token-wise error for any arbitrary out-of-distribution sequence length $L \le K$, where $K$ is the finite stack depth.
+\end{lemma}
 
-Then, the repeated application of $A$ acts as a spatial diffusion process on the stack. For an out-of-distribution sequence of length $L \gg 1$, the stack contents experience memory leakage where the variance of a stored token's depth position grows as $\mathcal{O}(L\epsilon)$, and the maximum recoverable probability mass of the token decays proportionally to $\mathcal{O}(1/\sqrt{L\epsilon})$.
+\begin{proof}
+We construct the matrices to map the inputs strictly to the deterministic logic of the Dyck-1 bracket balancing algorithm. We set all
+unspecified matrix elements to strictly zero.
+
+\paragraph{State Transition Matrix ($W_q \in \mathbb{R}^{2 \times 9}$)}
+Similarly to the reversal task, the controller must transition from $\text{READ}$ to $\text{WRITE}$ only when reading the $\text{EQ}$ token. 
+\begin{equation}
+W_q = \omega \begin{bmatrix}
+0 & 0 & 0 & 0 & 0 & -2 & 0 & 1 & 0 \\
+0 & 0 & 0 & 0 & 0 & 2 & 0 & 0 & 1
+\end{bmatrix}
+\end{equation}
+The $\text{Softmax}$ bounds ensure that the system remains in $\text{READ}$ ($q_{\text{READ}} \approx 1$) until $x_{\text{EQ}} = 1$, at which point it permanently transitions to $\text{WRITE}$.
+
+\paragraph{Memory Action Matrix ($W_a \in \mathbb{R}^{3 \times 9}$)}
+This matrix maps the input to the memory actions $\{\text{NOOP}, \text{PUSH}, \text{POP}\}$ according to the exact logical steps of the Dyck-1 bracket balancing algorithm.
+\begin{equation}
+W_a = \omega \begin{bmatrix}
+1 & 0 & 4 & 0 & 0 & 0 & 4 & 0 & 2 \\
+0 & 0 & 0 & 4 & 0 & 0 & 0 & 0 & 0 \\
+0 & 1 & 0 & 0 & 4 & 4 & 0 & 0 & 2
+\end{bmatrix}
+\end{equation}
+During the $\text{READ}$ phase ($q_{\text{READ}} \approx 1$), inputting an $\text{OPEN}$ bracket drives row 2 ($\text{PUSH}$) to $4\omega$, triggering a push. Inputting a $\text{CLOSE}$ bracket drives row 3 ($\text{POP}$) to $4\omega$, triggering a pop. Inputting $\text{EQ}$ or $\text{PAD}$ triggers $\text{NOOP}$.
+During the $\text{WRITE}$ phase ($q_{\text{WRITE}} \approx 1$), the controller ignores the input buffer and compares row 1 ($\text{NOOP}$) and row 3 ($\text{POP}$). We evaluate the boundary: $2\omega + \omega r_{\text{NULL}} = 2\omega + \omega r_{\text{OPEN}}$. Because $r(t) \in \Delta^1$, the model issues a continuous $\text{POP}$ command as long as $r_{\text{OPEN}} > 0.5$, halting via $\text{NOOP}$ precisely when the stack empties.
+
+\paragraph{Buffer Output Matrix ($W_b \in \mathbb{R}^{5 \times 9}$)}
+This matrix maps to the output vocabulary \\ $\{\text{PAD}, \text{OPEN}, \text{CLOSE}, \text{EQ}, \text{EOS}\}$.
+\begin{equation}
+W_b = \omega \begin{bmatrix}
+0 & 0 & 0 & 0 & 0 & 0 & 0 & 3 & 0 \\
+0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 \\
+0 & 2 & 0 & 0 & 0 & 0 & 0 & 0 & 1 \\
+0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 0 \\
+2 & 0 & 0 & 0 & 0 & 0 & 0 & 0 & 1
+\end{bmatrix}
+\end{equation}
+During the $\text{READ}$ phase, Row 1 enforces the emission of $\text{PAD}$ with a logit of $3\omega$, correctly satisfying the auto-regressive target mask logic. During the $\text{WRITE}$ phase, the matrix simply projects the stack distribution $\bm{r}_t$ directly to the output. An $\text{OPEN}$ symbol on top of the stack ($r_{\text{OPEN}}$) maps directly to emitting a $\text{CLOSE}$ bracket (Row 3). When the stack reaches the $\text{NULL}$ symbol, the model correctly switches to emitting the $\text{EOS}$ token (Row 5).
+\end{proof}
+
+
+
+\section{Memory Leakage}
+
+During training, the soft stack implementation recursively updates the stack matrix $M(t)$ using the expected distribution over symbols with respect to the continuous action probabilities. We can express the unrolled evolution of the stack away from the boundary terms using the transition matrix $A(t)$:
+
+\begin{equation}
+A(t) = a_{t,\text{noop}}I + a_{t,\text{push}}D + a_{t,\text{pop}}U
+\end{equation}
+where $D, U \in \{0,1\}^{K \times K}$ are the downshift and upshift operators.
+
+\begin{proposition}
+Assume the learned memory actions during a homogeneous phase of the algorithm (e.g., the $\text{POP}$ sequence during the $\text{WRITE}$ phase) produces a constant non-perfect action distribution $a \in \Delta^3$. Specifically, let the intended action have probability $1-\epsilon$ and the remaining probability mass $\epsilon > 0$ be distributed among the unintended actions, where $\epsilon = \alpha + \beta$. 
+
+Then, the repeated application of $A$ acts as a spatial diffusion process on the stack. For an out-of-distribution sequence of length $L \gg 1$, the stack contents experience memory leakage, where the maximum probability mass of the token decays proportional to $1/\sqrt{L\epsilon}$. 
 \end{proposition}
 
 \begin{proof}
-Consider the execution of $L$ consecutive $\text{POP}$ operations required to retrieve a stored string. The ideal scale-invariant sequence map executes the exact operator $U$ repeatedly. 
+We consider an idealistic setting, where during the READ phase of the algorithm the model has perfectly learned to push tokens onto the stack with zero error, and we track a single token's mass during the subsequent WRITE phase. Here, the execution of $L$ consecutive $\text{POP}$ operations is required to retrieve a stored string. The ideal sequence map executes the exact operator $U$ repeatedly. 
 
 Due to finite weight norms in the learned controller, the model instead applies the soft operator:
 \begin{equation}
@@ -109,11 +167,11 @@ A = (1-\epsilon)U + \alpha I + \beta D
 \end{equation}
 Because the shift operators satisfy $UD = I - e_1e_1^T$ and $DU = I - e_K e_K^T$, they commute away from the stack boundaries ($UD = DU = I$). Evaluating the stack matrix after $L$ steps corresponds to the matrix power $A^L$.
 
-Consider a one-hot token representation perfectly localized at depth $k_0$, represented by the basis vector $e_{k_0}$. Applying $A$ once distributes its mass:
+In this setting, we consider a one-hot token representation perfectly localized at depth $k_0$, represented by the basis vector $e_{k_0}$. Applying $A$ once distributes its mass:
 \begin{equation}
 A e_{k_0} = (1-\epsilon)e_{k_0 - 1} + \alpha e_{k_0} + \beta e_{k_0 + 1}
 \end{equation}
-This mathematically mirrors the transition matrix of a 1D discrete-time random walk where a particle steps up the stack with probability $p_{-1} = 1-\epsilon$, remains stationary with probability $p_0 = \alpha$, and steps down with probability $p_1 = \beta$.
+This resembles the transition matrix of a 1D discrete-time random walk where a particle steps up the stack with probability $p_{-1} = 1-\epsilon$, remains stationary with probability $p_0 = \alpha$, and steps down with probability $p_1 = \beta$.
 
 After $L$ independent applications of $A$, the depth position $k_L$ of the token's mass is a random variable given by the sum of $L$ independent steps. The mean shift per step is $\mu = \beta - (1-\epsilon)$, and the variance per step is $\sigma^2 \approx \epsilon$ (for small $\epsilon$).
 
@@ -121,15 +179,13 @@ By the Central Limit Theorem, for large $L$, the distribution of the token's mas
 \begin{equation}
 A^L e_{k_0} \sim \mathcal{N}(k_0 + L\mu, L\sigma^2)
 \end{equation}
-The variance of the token's location grows linearly with the sequence length:
+
+Here the peak probability density, located at the mean and representing the fidelity of the stored token when it reaches the top of the stack, is bounded by the peak of the Gaussian envelope:
 \begin{equation}
-\text{Var}(k_L) = L\sigma^2 \approx L\epsilon
+P_{\text{max}} \approx \frac{1}{\sqrt{2\pi L \sigma^2}} 
 \end{equation}
-Because the probability mass must integrate to 1, the peak probability density—representing the fidelity of the stored token when it reaches the top of the stack—is bounded by the peak of the Gaussian envelope:
-\begin{equation}
-P_{\text{max}} \approx \frac{1}{\sqrt{2\pi L \sigma^2}} = \mathcal{O}\left(\frac{1}{\sqrt{L\epsilon}}\right)
-\end{equation}
-As $L$ extends beyond the training horizon, $P_{\text{max}}$ strictly decays. Eventually, the signal overlaps with adjacent diffused tokens, causing the continuous trajectory to diverge from the deterministic Pushdown Transducer and resulting in out-of-distribution length generalization failure.
+
+As $L$ extends beyond the training horizon, $P_{\text{max}}$ strictly decays, and eventually the signal overlaps with adjacent tokens causing length generalization failure.
 \end{proof}
 
 
