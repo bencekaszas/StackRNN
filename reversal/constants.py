@@ -29,4 +29,4 @@ NUM_BUF_ACTIONS = 4
 #controller states
 STATE_READ = 0
 STATE_WRITE = 1
-NUM_STATES = 64
+NUM_STATES = 2
