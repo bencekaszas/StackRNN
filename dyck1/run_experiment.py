@@ -127,14 +127,14 @@ if __name__ == "__main__":
     plt.title("Training Loss Curve")
     plt.xlabel("Step")
     plt.ylabel("Loss")
-    plt.savefig(os.path.join(OUTPUT_DIR, "training_loss_curve.png"))
+    plt.savefig(os.path.join(OUTPUT_DIR, "training_loss_curve.pdf"))
 
     plt.figure(figsize=(10, 6))
     plt.plot(accuracies)
     plt.title("Training Accuracy Curve")
     plt.xlabel("Step")
     plt.ylabel("Accuracy")
-    plt.savefig(os.path.join(OUTPUT_DIR, "training_accuracy_curve.png"))
+    plt.savefig(os.path.join(OUTPUT_DIR, "training_accuracy_curve.pdf"))
 
 
 
@@ -143,12 +143,12 @@ if __name__ == "__main__":
     print("\n--- OOD Evaluation (Hard Actions) ---")
     hard_results = run_ood_evaluation(state, TEST_LENGTHS, hard_actions=True)
     plot_dyck_ood_generalization(hard_results, "OOD Generalization (Hard Stack Inference)", 
-                                 os.path.join(OUTPUT_DIR, "ood_gen_hard.png"), max_train_len=SEQ_LENGTH)
+                                 os.path.join(OUTPUT_DIR, "ood_gen_hard.pdf"), max_train_len=SEQ_LENGTH)
 
     print("\n--- OOD Evaluation (Soft Actions) ---")
     soft_results = run_ood_evaluation(state, TEST_LENGTHS, hard_actions=False)
     plot_dyck_ood_generalization(soft_results, "OOD Generalization (Soft Stack Inference)", 
-                                 os.path.join(OUTPUT_DIR, "ood_gen_soft.png"), max_train_len=SEQ_LENGTH)
+                                 os.path.join(OUTPUT_DIR, "ood_gen_soft.pdf"), max_train_len=SEQ_LENGTH)
 
     # --- Visualizations ---
     print("\n--- Generating Visualizations ---")
@@ -159,12 +159,12 @@ if __name__ == "__main__":
         # Hard Actions Visualization
         seq, stack_hist, act_hist, state_hist = evaluate_and_visualize_dyck(state, prompt, max_len=L+10, hard_actions=True)
         suffix = "_long" if L > 60 else ""
-        plot_dyck_stack_viz(seq, stack_hist, act_hist, os.path.join(OUTPUT_DIR, f"stack_viz_hard{suffix}.png"))
-        plot_dyck_state_trajectory(state_hist, L, os.path.join(OUTPUT_DIR, f"state_traj_hard{suffix}.png"))
+        plot_dyck_stack_viz(seq, stack_hist, act_hist, os.path.join(OUTPUT_DIR, f"stack_viz_hard{suffix}.pdf"))
+        plot_dyck_state_trajectory(state_hist, L, os.path.join(OUTPUT_DIR, f"state_traj_hard{suffix}.pdf"))
         
         # Soft Actions Visualization
         seq, stack_hist, act_hist, state_hist = evaluate_and_visualize_dyck(state, prompt, max_len=L+10, hard_actions=False)
-        plot_dyck_stack_viz(seq, stack_hist, act_hist, os.path.join(OUTPUT_DIR, f"stack_viz_soft{suffix}.png"))
-        plot_dyck_state_trajectory(state_hist, L, os.path.join(OUTPUT_DIR, f"state_traj_soft{suffix}.png"))
+        plot_dyck_stack_viz(seq, stack_hist, act_hist, os.path.join(OUTPUT_DIR, f"stack_viz_soft{suffix}.pdf"))
+        plot_dyck_state_trajectory(state_hist, L, os.path.join(OUTPUT_DIR, f"state_traj_soft{suffix}.pdf"))
 
     print(f"Results saved to {OUTPUT_DIR}")

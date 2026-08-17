@@ -93,8 +93,8 @@ def run_eval_and_collect(params, length=40):
 def plot_theory_viz(full_seq, stack_hist, action_hist, state_hist, prefix):
     # Reuse plotting logic from visualize.py
     from visualise import plot_deepmind_style, plot_state_trajectory
-    plot_deepmind_style(full_seq, stack_hist, action_hist, os.path.join(OUTPUT_DIR, f"{prefix}_stack.png"))
-    plot_state_trajectory(state_hist, len(full_seq)//2, os.path.join(OUTPUT_DIR, f"{prefix}_state.png"))
+    plot_deepmind_style(full_seq, stack_hist, action_hist, os.path.join(OUTPUT_DIR, f"{prefix}_stack.pdf"))
+    plot_state_trajectory(state_hist, len(full_seq)//2, os.path.join(OUTPUT_DIR, f"{prefix}_state.pdf"))
 
 if __name__ == "__main__":
     model = MinimalStackRNN()
@@ -138,5 +138,5 @@ if __name__ == "__main__":
     plt.ylabel("Accuracy")
     plt.ylim(-0.05, 1.05)
     plt.legend()
-    plt.savefig(os.path.join(OUTPUT_DIR, "ood_generalization_plot.png"))
+    plt.savefig(os.path.join(OUTPUT_DIR, "ood_generalization_plot.pdf"))
     print(f"All theoretical plots saved to {OUTPUT_DIR}")

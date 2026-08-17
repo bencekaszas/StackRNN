@@ -1,0 +1,252 @@
+
+\documentclass[10pt]{article} % For LaTeX2e
+\usepackage{tmlr}
+% If accepted, instead use the following line for the camera-ready submission:
+%\usepackage[accepted]{tmlr}
+% To de-anonymize and remove mentions to TMLR (for example for posting to preprint servers), instead use the following:
+%\usepackage[preprint]{tmlr}
+
+% Optional math commands from https://github.com/goodfeli/dlbook_notation.
+\input{math_commands.tex}
+
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsthm}
+\newtheorem{theorem}{Theorem}
+\newtheorem{definition}[theorem]{Definition}
+\newtheorem{lemma}[theorem]{Lemma}
+
+
+
+\newcommand{\mm}[1]{\textcolor{blue}{MM: #1}}
+\newcommand{\bence}[1]{\textcolor{red}{Bence: #1}}
+
+
+\title{Stack Blur and Random Walks: Length-Generalization\\ Failure in Differentiable Stacks}
+
+% Authors must not appear in the submitted version. They should be hidden
+% as long as the tmlr package is used without the [accepted] or [preprint] options.
+% Non-anonymous submissions will be rejected without review.
+
+% Update this template
+\author{\name Kyunghyun Cho \email kyunghyun.cho@nyu.edu \\
+      \addr Department of Computer Science\\
+      University of New York
+      \AND
+      \name Raia Hadsell \email raia@google.com \\
+      \addr DeepMind
+      \AND
+      \name Hugo Larochelle \email hugolarochelle@google.com\\
+      \addr Mila, Universit\'e de Montr\'eal \\
+      Google Research\\
+      CIFAR Fellow}
+
+% The \author macro works with any number of authors. Use \AND 
+% to separate the names and addresses of multiple authors.
+
+\newcommand{\fix}{\marginpar{FIX}}
+\newcommand{\new}{\marginpar{NEW}}
+
+\def\month{MM}  % Insert correct month for camera-ready version
+\def\year{YYYY} % Insert correct year for camera-ready version
+\def\openreview{\url{https://openreview.net/forum?id=XXXX}} % Insert correct link to OpenReview for camera-ready version
+
+
+\begin{document}
+
+
+\maketitle
+
+\begin{abstract}
+XXX
+\end{abstract}
+
+\section*{Placeholder (delete): high level points}
+\mm{
+\begin{itemize}
+    \item Why not just harden the stack at inference if you want to get over this blurring issue? Perhaps should illustrate an example where this breaks down...
+    \item We need to clarify the relationships between a random stack (we sample from the distribution of of actions outputted at each step), the soft stack (stores the expectation) and the random walk / model we are using.
+    \item What are the key practical takeaways of our result? Does it say anything more general or can we argue that the decay rate holds more generally at least empirically? What examples of algorithms have we already got experiments for / could we do experiments for to check this?
+    \item Maybe we can compute the ballot probabilities as it where taking epsilon at each step by looking at the model uncertainty and solving a dynamic program?
+\end{itemize}
+}
+
+\section{Introduction}
+\mm{
+Probably do this at the end! Something like
+\begin{itemize}
+    \item Can a model learn generalize beyond its training horizon?
+    \item Learning algorithms is a sensible test case: they have length invariant rules which the model has to infer from training data! There is a rich literature on this...
+    \item Length generalization failure can occur for a number of reasons, notably either because the model learns horizon dependent hacks rather than the underlying program or logic, or due to memory fidelity issues. Maybe use some of the trace images you produced to illustrate this point?
+    \item Differentiable stacks and other architectures like turing machines are attempts to directly parametrize families of, e.g., Push down transducers. Intuitively they have the natural inductive biases for learning algorithms... They externalize memory hopefully getting rid of the memory fidelity problem.
+    \item However, the memory fidelity issues still arise due to uncertainty in memory actions which leads to blurring.
+    \item In this work we quantitively characterize the effect of this blurring showing that...
+    \item Our key contributions are as follows...
+    \begin{itemize}
+        \item For a minimal LIFO memory benchmark sequence reversal and under a simple stochastic controller abstraction we provide a ballot-counting argument to derive a retrieval-fidelity decay bound of XXX. 
+        \item Our experiments support these results.
+        \item We also show this rate holds more broadly outside the benchmark.
+        \item Finally we use a dynamical programming technique to estimate uncertainty of information stored in the stack.
+    \end{itemize}
+\end{itemize}
+}
+
+\section{Background and Related Work}
+\mm{To do, some broad categories to consider are probably. Need to highlight that what we are doing is novel and place it in the context of the rest of the literature.
+\begin{itemize}
+    \item Differentiable stacks and neural memory. Describe how neural stacks and Turing machines etc work, define them and cite the right references. 
+    \item Review works studying their properties, in particular commentary on length generalization in algorithmic tasks.
+    \item A small note on length generalization in other models outside of neural memory.
+\end{itemize}
+}
+
+
+\section{Fixed Error Analysis via Ballot Counting}
+In this section, we analyse the memory fidelity of an abstract probabilistic stack controller solving a minimal exact-retrieval task with a constant error rate.
+
+\subsection{Problem Formulation and Abstract Controller}
+
+Our main focus is the algorithmic task of sequence reversal, which relies heavily on the stack mechanism. Let $\Gamma$ be a finite alphabet of tokens (e.g.\ a binary vocabulary where $|\Gamma| = 2$). The model receives an input sequence of length $N$, denoted as $\xi(1), \dots, \xi(N)$, where $\xi(u) \in \Gamma$. Following an encoding phase where we push the input sequence onto the stack, a phase switch occurs at time $\tau = N$, after which the model outputs the exact sequence in reverse order. 
+
+The model uses an internal last-in-first-out (LIFO) memory structure, and we model it via an abstract probabilistic stack controller. At each timestep $t$, the controller must execute a discrete action: \texttt{push} during the encoding phase ($t \leq \tau$) and \texttt{pop} during the decoding phase ($t > \tau$). In a recurrent model, this action is decided via a probability distribution over the actions (e.g.\ using a softmax layer), and so there is inherent uncertainty exhibited in the trained models. In our abstract controller, we formalise this by defining a fixed error rate $\epsilon \in (0,0.5)$. At any timestep $t$, the controller executes the correct action with probability $1-\epsilon$, and the incorrect action with probability $\epsilon$.
+
+
+
+\begin{definition}[Algorithmic Fidelity/ Token Retrieval vs. Symbol Correctness]
+    Let $m_k(t)$ denote the element at depth $k$ of the stack at time $t$, with the top of the stack given as $m_1(t)$. Suppose a specific target token is pushed onto the stack at time $t_i \leq \tau$, and must be retrieved at output time $t_{out} = 2\tau - t_i +1$. We define two types of retrieval probabilities:
+    \begin{itemize}
+        \item \textbf{Algorithmic Fidelity/ Token Retrieval:} The probability that the exact token pushed onto the stack at $t_i$ is at the top of the stack at $t_{out}$.
+        \item \textbf{Symbol Correctness:} The probability that $m_1(t_{out})$, the element at the top of the stack at output shares the same symbol $\gamma \in \Gamma$ as the target $\xi(t_i)$, regardless of whether it is the true target token or not.
+    \end{itemize}
+\end{definition}
+Our primary objective is to bound the Algorithmic Fidelity. If we can show that the probability of retrieving the exact token diminishes with the sequence length, the overall probability of reading off the correct symbol will devolve into random guessing.
+
+\subsection{Stack Dynamics as a Bounded Random Walk}
+
+We can model the trajectory of a specific token on the stack as a $1$-dimensional integer random walk. Let $n = \tau - t_i$ be the number of timesteps from the insertion of the token to the phase switch. As the task considered is string reversal, $n$ also gives us the number of steps from the phase switch to the output time ($n = t_{out} - \tau$).
+
+
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.75\linewidth]{figs/stack_random_walk_50_0.1.pdf}
+    \caption{Simulated stack trajectories. While an ideal deterministic controller ($\epsilon=0$) executes the triangular path, the probabilistic controllers execute bounded random walks with incorrect actions.}
+    \label{fig:rws}
+\end{figure}
+
+\begin{lemma}[Stack combinatorics]
+\label{stack-lemma}
+The number of valid integer random walks consisting of $n$ steps of unit length, starting at depth $1$ and ending at depth $k$, and strictly avoiding the boundary at $0$ is given by
+$$
+N_{1 \to k, n} = \binom{n}{\frac{n+k-1}{2}} - \binom{n}{\frac{n+k+1}{2}}.
+$$
+Furthermore, for $N_{1 \to k, n}$ to be non-zero, $n$ and $k-1$ must share the same parity.
+\end{lemma}
+
+Using Lemma \ref{stack-lemma}, we can construct probabilities for the two distinct phases of the token's lifespan. For the encoding phase, the correct action is \texttt{push} with probability $(1-\epsilon)$. Then letting $m= \frac{n+k-1}{2}$ be the number of executed push actions, the probability that the target token pushed onto the stack at $t_i$ is at depth $k$ on the stack at the phase switch $\tau$ is given by
+
+$$
+\mathbf{P}_{enc}(k) = \bigg[\binom{n}{m} - \binom{n}{m+1}\bigg](1-\epsilon)^m\epsilon^{n-m}.
+$$
+We can write down a similar probability for the decoding phase. The correct action is now \texttt{pop} with a probability $(1-\epsilon)$. Due to the symmetry of the binomial coefficient, the path counts $N_{1 \to k, n}$ and $N_{k \to 1, n}$ are identical. Thus, assuming that $\epsilon$ is constant across the two phases, the probability of retrieving the token at depth $k$ at the phase switch at time $t_{out}$ is identical to the encoding probability above:
+$$
+\mathbf{P}_{enc}(k) = \mathbf{P}_{dec}(k) = \mathbf{P}(k).
+$$
+
+\subsection{Theoretical Bounds on Memory Fidelity}
+\begin{theorem}[ Decay of Memory Fidelity] For an abstract probabilistic stack controller with a constant error rate $\epsilon \in (0.0.5)$, the expected algorithmic fidelity of a token pushed onto the stack $n$ timesteps before the phase switch is bounded above by  $\mathcal{O}(1/\sqrt{n})$:
+
+$$
+\text{Algorithmic Fidelity} \leq \frac{1}{\sqrt{2e n \epsilon(1-\epsilon)}}.
+$$
+
+\end{theorem}
+\begin{proof}
+
+Let $\lambda(t,t_i)$ denote the stack depth at time $t$ of the token pushed onto the stack at time $t_i$. Then the algorithmic fidelity of a token is exactly given by the probability that it is at the top of the stack at output time, and can be written as
+\begin{align*}
+\mathbb{P}(\lambda(t_i,t_{out}) = 1) &= \sum_{k \equiv n+1 \pmod 2} \mathbf{P}_{enc}(k) \cdot \mathbf{P}_{dec}(k) \\
+&= \sum_k [\mathbf{P}(k)]^2.
+\end{align*}
+
+As we know that $\{\mathbf{P}(k)\}_{k \in [1,n+1]}$ are mutually exclusive, the probabilities must sum to at most one, and so $\sum_{k=1}^{n+1} \mathbf{P}(k) \leq 1$. This also guarantees that the sum of squares is bounded above by the maximum value of all the possible probabilities:
+$$
+\sum_{k} [\mathbf{P}(k)]^2 \leq \left( \max_k \mathbf{P}(k) \right) \sum_k \mathbf{P}(k) \leq \max_k \mathbf{P}(k).
+$$
+
+From the derivation of the phases of the token’s lifespan above, the unconstrained path probability is strictly bounded above by the probability mass function of a standard Binomial distribution $B(n, 1-\epsilon)$:
+$$
+\mathbf{P}(k) < \binom{n}{m} (1-\epsilon)^m \epsilon^{n-m}.
+$$
+
+To then rigorously bound the maximum probability without relying on asymptotic limits, we apply the universal upper bound for sums of Bernoulli trials established in \cite{BAILLON_COMINETTI_VAISMAN_2016}. For any random variable $X \sim \text{Bin}(n,p)$, the maximum point probability is universally bounded by the inverse square root of its variance, scaled by $2e$:
+$$
+\max_k \mathbb{P}(X=k) \leq \frac{1}{\sqrt{2e \cdot \text{Var}(X)}}.
+$$
+
+As the Variance of the Binomial distribution is given by $np(1-p)$, for our stack controller controller with parameters $n$ and $\epsilon$, the ceiling for the trajectory is given by
+$$
+\max_k \mathbf{P}(k) \leq \frac{1}{\sqrt{2en\epsilon(1-\epsilon)}}.
+$$
+
+As $\epsilon$ is assumed to be fixed, the Algorithmic Fidelity decays to zero as $\mathcal{O}(1/\sqrt{n})$.
+
+\end{proof}
+
+
+\subsection{Total Symbol Correctness and Random Guessing}
+
+
+\mm{To do.
+\begin{itemize}
+    \item Introduce and define abstract probabilistic stack controller with error rate at each time
+    \item Introduce and define problem of binary sequence reversal (I think it wouldn't be too hard to generalize to other token sizes, e.g., $k$ rather than binary but not a big deal).
+    \item Emphasize distinction between item / token retrieval versus symbol correctness.
+    \item Connect random stack / expected stack to a random walk and ballot counting problem to provide intuition. Use diagrams / plots! Ideally we want to formalize the relationship even if they aren't exactly equivalent.
+    \item State key theorem on symbol correctness and token retrieval. You should use proposition and proof environments in latex to write these.
+    \item Experiments to show tha the theory works / is sensible!
+    \item Might be interesting to just see if we see the same rates of decay in problems outside of string reversal, e.g., bracket matching and others. Is there something where we can claim experimentally at least that our results hold more broadly?
+\end{itemize}
+}
+
+
+\section{From Constant Error Analysis to Online Dynamic Programming\mm{?}}
+\mm{Potentially to do, key idea here is to use a dynamical programming approach. Main idea is as follows.
+\begin{itemize}
+    \item Record the uncertainty of controller's actions at each step.
+    \item Solve a dynamic program to online estimate uncertainty? 
+    \item This would make sense for a random stack. For the soft stack though you could just look at the distribution stored in the stack! I guess collision versus retrieval is still different... 
+\end{itemize}
+}
+\bence{\begin{itemize}
+    \item Generalisation to algorithmic tasks across the Chomsky hierarchy - possible new section replacing this?
+    \item Should apply our findings and show its relevancy
+    \item Investigate how we could use the average time spent on the stack for a specific task as a tool to estimate how well the model could generalise given $\epsilon$
+\end{itemize}}
+
+
+
+
+\section{Summary, Limitations and Future Work}
+
+\mm{To do...}
+
+
+\textbf{Reproducibility Statement:} Code able to reproduce our experimental results can be found in the following anonymous repository, \mm{INSERT ONCE DONE}
+
+\textbf{Ethics Statement:} This work uses only synthetic, non-sensitive data, involves no human or animal subjects, carries minimal dual-use or environmental risks (modest compute).
+
+\textbf{Broader Impact Statement:} This work contributes to the mathematical and conceptual foundations of machine learning and intelligent systems. Although the results are primarily theoretical, a better understanding of the underlying principles governing learning, generalization, and representation can inform the long-term development of more reliable, interpretable, and robust algorithms.
+
+
+\bibliography{references}
+\bibliographystyle{tmlr}
+
+\appendix
+\section{Appendix}
+XXX
+
+\end{document}

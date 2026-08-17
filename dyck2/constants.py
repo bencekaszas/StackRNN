@@ -1,0 +1,30 @@
+# Dyck-2 Task Constants
+BATCH_SIZE = 64
+SEQ_LENGTH = 60    # Maximum length of input prefix
+
+TEST_SEQ_LENGTH = 200   
+MAX_LEN = 2 * TEST_SEQ_LENGTH + 5
+
+HIDDEN_DIM = 64
+STACK_DEPTH = 300
+LEARNING_RATE = 1e-4
+STEPS = 4000
+EVAL_FREQ = 500
+
+# input (Dyck-2)
+# 0: PAD, 1: '(', 2: ')', 3: '[', 4: ']', 5: '=', 6: EOS
+DYCK_PAD, DYCK_OPEN1, DYCK_CLOSE1, DYCK_OPEN2, DYCK_CLOSE2, DYCK_EQ, DYCK_EOS = 0, 1, 2, 3, 4, 5, 6
+DYCK_VOCAB_SIZE = 7
+
+# stack
+# 0: NULL, 1: '(', 2: '['
+DYCK_STACK_NULL, DYCK_STACK_OPEN1, DYCK_STACK_OPEN2 = 0, 1, 2
+DYCK_STACK_VOCAB_SIZE = 3
+
+# memory actions
+ACT_NOOP, ACT_PUSH_0, ACT_PUSH_1, ACT_POP = 0, 1, 2, 3
+# Note: For Dyck-2, ACT_PUSH_0 pushes DYCK_STACK_OPEN1, ACT_PUSH_1 pushes DYCK_STACK_OPEN2
+NUM_MEM_ACTIONS = 4
+
+# controller states
+DYCK_NUM_STATES = 8

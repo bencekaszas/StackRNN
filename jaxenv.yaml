@@ -1,0 +1,4 @@
+name: jax_encv
+channels:
+  - defaults
+prefix: /opt/homebrew/anaconda3/envs/jax_encv

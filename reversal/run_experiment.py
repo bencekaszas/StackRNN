@@ -15,9 +15,9 @@ from models import StackRNN
 
 # Import constants for plotting
 from constants import ACT_PUSH_0, ACT_PUSH_1, ACT_POP, STACK_NULL
-from visualise import evaluate_and_visualize, plot_deepmind_style, plot_state_trajectory, plot_final_stack_distribution, plot_read_fidelity
+from visualise import evaluate_and_visualize, plot_deepmind_style, plot_epsilon_analysis, plot_state_trajectory, plot_final_stack_distribution, plot_read_fidelity, plot_stack_entropy, plot_sequence_entropy
 
-OUTPUT_DIR = "../results/reversal/baseline_64D_state"
+OUTPUT_DIR = "../results/reversal/entropy_test"
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -92,7 +92,7 @@ if __name__ == "__main__":
     final_results = {}
 
     # Main loop
-    print(f"\n=== Training StackRNN (64D Softmax State, tanh activation) ===")
+    print(f"\n=== Training StackRNN ===")
     
     key = jax.random.PRNGKey(42)
     dummy_input = jnp.zeros((1, 2 * TRAINING_SEQ_LEN + 2), dtype=jnp.int32)
@@ -115,14 +115,14 @@ if __name__ == "__main__":
     plt.title("Training Loss Curve")
     plt.xlabel("Step")
     plt.ylabel("Loss")
-    plt.savefig(os.path.join(OUTPUT_DIR, "training_loss_curve.png"))
+    plt.savefig(os.path.join(OUTPUT_DIR, "training_loss_curve.pdf"))
 
     plt.figure(figsize=(10, 6))
     plt.plot(accs)
     plt.title("Training Accuracy Curve")
     plt.xlabel("Step")
     plt.ylabel("Accuracy")
-    plt.savefig(os.path.join(OUTPUT_DIR, "training_accuracy_curve.png"))
+    plt.savefig(os.path.join(OUTPUT_DIR, "training_accuracy_curve.pdf"))
     
     #evaluate OOD
     print(f"--- Evaluating OOD and Generating Visualizations ---")
@@ -131,21 +131,35 @@ if __name__ == "__main__":
     VIS_L = 40
     vis_prompt = generate_fixed_batch(1, VIS_L)
     # Enable hard_actions for inference
-    full_seq, stack_hist, action_hist, state_hist = evaluate_and_visualize(state, vis_prompt, max_len=VIS_L+10, hard_actions=False)
-    plot_deepmind_style(full_seq, stack_hist, action_hist, os.path.join(OUTPUT_DIR, "stack_visualization.png"))
-    plot_state_trajectory(state_hist, VIS_L, os.path.join(OUTPUT_DIR, "state_trajectory.png"))
-    plot_read_fidelity(stack_hist, full_seq, VIS_L, os.path.join(OUTPUT_DIR, "read_fidelity.png"))
+    full_seq, stack_hist, action_hist, state_hist, buffer_hist = evaluate_and_visualize(state, vis_prompt, max_len=VIS_L+10, hard_actions=False)
+    plot_deepmind_style(full_seq, stack_hist, action_hist, os.path.join(OUTPUT_DIR, "stack_visualization.pdf"))
+    plot_state_trajectory(state_hist, VIS_L, os.path.join(OUTPUT_DIR, "state_trajectory.pdf"))
+    plot_read_fidelity(stack_hist, full_seq, VIS_L, os.path.join(OUTPUT_DIR, "read_fidelity.pdf"))
     print("Saved moderate sequence visualizations.")
+    plot_epsilon_analysis(full_seq, action_hist, VIS_L, 
+                               os.path.join(OUTPUT_DIR, f"epsilon_dist{VIS_L}.pdf"),
+                               os.path.join(OUTPUT_DIR, f"epsilon_time{VIS_L}.pdf"),
+                               os.path.join(OUTPUT_DIR, f"epsilons{VIS_L}.npy"))
+    plot_stack_entropy(stack_hist, VIS_L, os.path.join(OUTPUT_DIR, f"stack_entropy_{VIS_L}.pdf"))
+    plot_sequence_entropy(stack_hist, VIS_L, os.path.join(OUTPUT_DIR, f"sequence_entropy_top_{VIS_L}.pdf"), os.path.join(OUTPUT_DIR, f"sequence_entropy_total_{VIS_L}.pdf"))
+
 
     # --- Generate Visualizations for a very long OOD sequence ---
     VIS_L_LONG = 500
     vis_prompt_long = generate_fixed_batch(1, VIS_L_LONG)
-    full_seq_long, stack_hist_long, action_hist_long, state_hist_long = evaluate_and_visualize(state, vis_prompt_long, max_len=VIS_L_LONG+10, hard_actions=False)
-    plot_deepmind_style(full_seq_long, stack_hist_long, action_hist_long, os.path.join(OUTPUT_DIR, "stack_visualization_long.png"))
-    plot_state_trajectory(state_hist_long, VIS_L_LONG, os.path.join(OUTPUT_DIR, "state_trajectory_long.png"))
-    plot_read_fidelity(stack_hist_long, full_seq_long, VIS_L_LONG, os.path.join(OUTPUT_DIR, "read_fidelity_long.png"))
-    plot_final_stack_distribution(stack_hist_long, os.path.join(OUTPUT_DIR, "final_stack_dist.png"))
+    full_seq_long, stack_hist_long, action_hist_long, state_hist_long, buffer_hist_long = evaluate_and_visualize(state, vis_prompt_long, max_len=VIS_L_LONG+10, hard_actions=False)
+    plot_deepmind_style(full_seq_long, stack_hist_long, action_hist_long, os.path.join(OUTPUT_DIR, "stack_visualization_long.pdf"))
+    plot_state_trajectory(state_hist_long, VIS_L_LONG, os.path.join(OUTPUT_DIR, "state_trajectory_long.pdf"))
+    plot_read_fidelity(stack_hist_long, full_seq_long, VIS_L_LONG, os.path.join(OUTPUT_DIR, "read_fidelity_long.pdf"))
+    plot_final_stack_distribution(stack_hist_long, os.path.join(OUTPUT_DIR, "final_stack_dist.pdf"))
     print("Saved long OOD sequence visualizations.")
+    plot_epsilon_analysis(full_seq_long, action_hist_long, VIS_L_LONG, 
+                               os.path.join(OUTPUT_DIR, f"epsilon_dist{VIS_L_LONG}.pdf"),
+                               os.path.join(OUTPUT_DIR, f"epsilon_time{VIS_L_LONG}.pdf"),
+                               os.path.join(OUTPUT_DIR, f"epsilons{VIS_L_LONG}.npy"))
+    plot_stack_entropy(stack_hist_long, VIS_L_LONG, os.path.join(OUTPUT_DIR, f"stack_entropy_{VIS_L_LONG}.pdf"))
+    plot_sequence_entropy(stack_hist_long, VIS_L_LONG, os.path.join(OUTPUT_DIR, f"sequence_entropy_top_{VIS_L_LONG}.pdf"), os.path.join(OUTPUT_DIR, f"sequence_entropy_total_{VIS_L_LONG}.pdf"))
+
 
     for L in TEST_LENGTHS:
         # Fewer samples for very long sequences
@@ -198,5 +212,5 @@ if __name__ == "__main__":
     plt.ylim(-0.05, 1.05)
     plt.legend()
     plt.tight_layout()
-    plt.savefig(os.path.join(OUTPUT_DIR, "ood_generalization_plot.png"))
+    plt.savefig(os.path.join(OUTPUT_DIR, "ood_generalization_plot.pdf"))
     plt.show()

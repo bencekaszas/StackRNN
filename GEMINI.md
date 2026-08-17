@@ -22,6 +22,7 @@ This is a Python-based research project investigating the out-of-distribution (O
     *   **8D State:** Converges extremely fast (100% ID accuracy by step 3,000) but shows poor OOD generalization, potentially due to overfitting.
     *   **2D State:** Slower convergence but more likely to learn the minimal "counter" logic required for Dyck languages.
 4.  **The "Hard Action" Breakthrough (Reversal):** Confirmed that forcing discrete PUSH/POP actions during evaluation allows generalization to $L=500+$ despite training only on $L \le 60$.
+5.  **Theoretical Formalization of Soft Stack Error Bounds:** Formalized the memory fidelity decay using integer-valued random walks (ballot counting). Assuming a constant error rate $\epsilon$ for the controller's actions, the repeated application of soft shift operations acts as a spatial diffusion process on the stack. For a target token at distance $n$ from the phase switch, the expected probability mass on the correct symbol decays as $\mathcal{O}(1/\sqrt{n})$, mathematically proving that soft stacks inevitably degrade to random guessing on sufficiently long OOD sequences.
 
 ## Current Project State
 
@@ -29,6 +30,7 @@ This is a Python-based research project investigating the out-of-distribution (O
     *   `/reversal/`: String reversal task files.
     *   `/dyck1/`: Dyck-1 task files.
     *   `/results/`: Organized by task and experiment configuration.
+    *   `/proof/`: Theoretical proofs and bounds modeling stack behavior.
 *   **Performance:**
     *   **Reversal:** 100% Accuracy up to $L=500$ (Hard Inference).
     *   **Dyck-1:** 100% ID Accuracy; OOD generalization varies by state size (currently investigating).
@@ -36,20 +38,24 @@ This is a Python-based research project investigating the out-of-distribution (O
 
 ## Immediate Research Goals
 
-### 1. String Reversal Task ($Q = \text{NUM\_STATES}$)
+### 1. Theoretical Extensions & Confidence Estimation
+*   **Action Entropy & OOD Robustness:** Investigate if tracking statistics like the in-horizon action error rate ($\epsilon_t$) or action entropy can predict length generalization failure dynamically. Can we build an online metric to compute "confidence" during inference based on memory fidelity?
+*   **Hard Stack Trade-offs:** Formally evaluate the pros and cons of hardening the stack actions at inference as a "fix" for memory leakage.
+
+### 2. String Reversal Task ($Q = \text{NUM\_STATES}$)
 *   **$Q=64$ Hyperparameter Search:** Conduct a systematic search to ensure the model consistently reaches 100% training accuracy. This is critical to ensure that any OOD generalization failures are due to the learned solution's structure rather than simple underfitting.
 *   **$Q=2$ Phase Change Analysis:** Investigate the empirical "plateau" behavior where the model lingers at 50% (random) accuracy for many steps before a sudden phase change to 100%. 
     *   **Analysis:** Determine if the bottleneck is learning the state transitions or the stack actions.
     *   **Method:** Monitor gradient norms and specific weights in the state-controller vs. memory-action heads during the plateau.
 
-### 2. Dyck-1 Task
+### 3. Dyck-1 Task
 *   **Data Volume Study:** Investigate if the poor OOD generalization observed in Dyck-1 is simply a function of training data scarcity for a more complex class.
 *   **Sample Size Scaling Experiment:**
     *   Define a range of training set sizes (number of unique samples).
     *   For each size, train the model to 100% ID accuracy.
     *   **Evaluation:** Generate OOD generalization curves (Accuracy vs. Test Sequence Length) for each training size to identify the threshold for reliable algorithmic learning.
 
-### 3. Task Expansion
+### 4. Task Expansion
 *   **Palindrome Detection:** Implementation of bit-string palindrome detection.
 *   **Dyck-2:** Expanding to two bracket types to test nested recursive logic.
 
